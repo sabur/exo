@@ -63,10 +63,20 @@ class CacheSnapshot:
 
 
 def _detached_copy(a: mx.array) -> mx.array:
-    dtype = a.dtype
-    if dtype == mx.bfloat16:
-        return mx.array(np.array(a.astype(mx.float32))).astype(mx.bfloat16)
-    return mx.array(np.array(a))
+    """Create an independent copy of an mlx array without numpy round-trip.
+    
+    Uses astype(dtype) which forces a copy while preserving the dtype.
+    This keeps data on GPU and avoids expensive CPU transfer.
+    
+    Args:
+        a: Input mlx array
+    
+    Returns:
+        Independent copy of the array (same dtype, different memory)
+    """
+    # astype(dtype) forces a copy without changing dtype
+    # This breaks shared_ptr chains while staying on GPU
+    return a.astype(a.dtype)
 
 
 def copy_rotating_kv_cache(cache: RotatingKVCache) -> RotatingKVCache | None:
