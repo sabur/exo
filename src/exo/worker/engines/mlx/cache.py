@@ -307,7 +307,61 @@ class KVPrefixCache:
                     
                     # Merge this segment's KV into the working cache
                     for i, (src, dst) in enumerate(zip(cached_cache, cache)):
-                        if hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                        # Handle DeepseekV4Cache specially
+                        if isinstance(src, DeepseekV4Cache) and isinstance(dst, DeepseekV4Cache):
+                            # Merge local RotatingKVCache
+                            src_local = src.local
+                            dst_local = dst.local
+                            
+                            if src_local.keys is not None and src_local.keys.shape[2] == segment_len:
+                                if dst_local.keys is None:
+                                    dst_local.keys = _detached_copy(src_local.keys)
+                                    dst_local.values = _detached_copy(src_local.values)
+                                else:
+                                    dst_local.keys = mx.concatenate([dst_local.keys, _detached_copy(src_local.keys)], axis=2)
+                                    dst_local.values = mx.concatenate([dst_local.values, _detached_copy(src_local.values)], axis=2)
+                                
+                                dst_local.offset = cached_len + segment_len
+                                dst_local._idx = cached_len + segment_len
+                            
+                            # Merge compressor branches
+                            for branch_key, src_branch in src._branches.items():
+                                if branch_key not in dst._branches:
+                                    continue
+                                dst_branch = dst._branches[branch_key]
+                                
+                                # Merge buffer_kv
+                                if src_branch.buffer_kv is not None and src_branch.buffer_kv.shape[2] == segment_len:
+                                    if dst_branch.buffer_kv is None:
+                                        dst_branch.buffer_kv = _detached_copy(src_branch.buffer_kv)
+                                        dst_branch.buffer_gate = _detached_copy(src_branch.buffer_gate)
+                                    else:
+                                        dst_branch.buffer_kv = mx.concatenate([dst_branch.buffer_kv, _detached_copy(src_branch.buffer_kv)], axis=2)
+                                        dst_branch.buffer_gate = mx.concatenate([dst_branch.buffer_gate, _detached_copy(src_branch.buffer_gate)], axis=2)
+                                
+                                # Merge prev_kv
+                                if src_branch.prev_kv is not None and src_branch.prev_kv.shape[2] == segment_len:
+                                    if dst_branch.prev_kv is None:
+                                        dst_branch.prev_kv = _detached_copy(src_branch.prev_kv)
+                                        dst_branch.prev_gate = _detached_copy(src_branch.prev_gate)
+                                    else:
+                                        dst_branch.prev_kv = mx.concatenate([dst_branch.prev_kv, _detached_copy(src_branch.prev_kv)], axis=2)
+                                        dst_branch.prev_gate = mx.concatenate([dst_branch.prev_gate, _detached_copy(src_branch.prev_gate)], axis=2)
+                                
+                                # Merge pool
+                                if src_branch.pool is not None:
+                                    if dst_branch.pool is None:
+                                        dst_branch.pool = _detached_copy(src_branch.pool)
+                                    else:
+                                        dst_branch.pool = mx.concatenate([dst_branch.pool, _detached_copy(src_branch.pool)], axis=2)
+                                
+                                # Copy lengths
+                                dst_branch.buffer_lengths = deepcopy(src_branch.buffer_lengths)
+                                dst_branch.pool_lengths = deepcopy(src_branch.pool_lengths)
+                                dst_branch.buffer_count = deepcopy(src_branch.buffer_count)
+                        
+                        elif hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                            # Standard RotatingKVCache / ArraysCache handling
                             src_keys = src.keys
                             src_vals = src.values
                             

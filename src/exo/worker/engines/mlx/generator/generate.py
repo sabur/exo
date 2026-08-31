@@ -42,6 +42,7 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
+    DeepseekV4Cache,
     KVPrefixCache,
     copy_snapshot_entry,
     encode_prompt,
@@ -715,7 +716,45 @@ def mlx_generate(
                 
                 # Extract this segment's portion from the full cache
                 for i, (src, dst) in enumerate(zip(caches, segment_cache)):
-                    if hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                    # Handle DeepseekV4Cache specially
+                    if isinstance(src, DeepseekV4Cache) and isinstance(dst, DeepseekV4Cache):
+                        # Extract local RotatingKVCache
+                        src_local = src.local
+                        dst_local = dst.local
+                        
+                        if src_local.keys is not None and src_local.keys.shape[2] >= end:
+                            dst_local.keys = _detached_copy(src_local.keys[:, :, start:end, :])
+                            dst_local.values = _detached_copy(src_local.values[:, :, start:end, :])
+                            dst_local.offset = segment_len
+                            dst_local._idx = min(src_local._idx, end) - start
+                        
+                        # Extract compressor branches
+                        for branch_key, src_branch in src._branches.items():
+                            if branch_key not in dst._branches:
+                                continue
+                            dst_branch = dst._branches[branch_key]
+                            
+                            # Extract buffer_kv
+                            if src_branch.buffer_kv is not None and src_branch.buffer_kv.shape[2] >= end:
+                                dst_branch.buffer_kv = _detached_copy(src_branch.buffer_kv[:, :, start:end, :])
+                                dst_branch.buffer_gate = _detached_copy(src_branch.buffer_gate[:, :, start:end, :])
+                            
+                            # Extract prev_kv
+                            if src_branch.prev_kv is not None and src_branch.prev_kv.shape[2] >= end:
+                                dst_branch.prev_kv = _detached_copy(src_branch.prev_kv[:, :, start:end, :])
+                                dst_branch.prev_gate = _detached_copy(src_branch.prev_gate[:, :, start:end, :])
+                            
+                            # Extract pool
+                            if src_branch.pool is not None:
+                                dst_branch.pool = _detached_copy(src_branch.pool[:, :, start:end, :])
+                            
+                            # Copy lengths (slice the lists)
+                            dst_branch.buffer_lengths = src_branch.buffer_lengths[:]
+                            dst_branch.pool_lengths = src_branch.pool_lengths[:]
+                            dst_branch.buffer_count = src_branch.buffer_count[:]
+                    
+                    elif hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                        # Standard RotatingKVCache / ArraysCache handling
                         if src.keys is not None and src.keys.shape[2] >= end:
                             dst.keys = _detached_copy(src.keys[:, :, start:end, :])
                             dst.values = _detached_copy(src.values[:, :, start:end, :])
