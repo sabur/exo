@@ -239,6 +239,11 @@ class KVPrefixCache:
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
+        
+        # Structured cache separation: semantic boundaries
+        # Each segment is cached independently with a hash for change detection
+        # Segments: [system, context, conversation...]
+        self.segmented_caches: dict[str, tuple[mx.array, KVCacheType, str]] = {}  # segment_id -> (tokens, cache, content_hash)
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -248,6 +253,90 @@ class KVPrefixCache:
         self._media_regions.clear()
         self._last_used.clear()
         self.prefill_tps.clear()
+        # Keep segmented caches - they persist across turns unless invalidated
+
+    def set_segment_cache(
+        self,
+        segment_id: str,
+        tokens: mx.array,
+        cache: KVCacheType,
+        content_hash: str,
+    ):
+        """Set a segmented cache with content hash for change detection."""
+        self.segmented_caches[segment_id] = (tokens, deepcopy(cache), content_hash)
+        logger.info(f"Segment cache '{segment_id}' set: {len(tokens)} tokens, hash={content_hash[:8]}")
+
+    def get_segmented_cache(
+        self,
+        model: Model,
+        prompt_tokens: mx.array,
+        segment_boundaries: list[tuple[str, int, int, str]],  # (segment_id, start, end, content_hash)
+        media_regions: list["MediaRegion"] | None = None,
+    ) -> tuple[KVCacheType, mx.array, float]:
+        """Get KV cache using semantic boundaries with change detection.
+        
+        Args:
+            model: The model
+            prompt_tokens: Full prompt tokens
+            segment_boundaries: List of (segment_id, start_token, end_token, content_hash)
+            media_regions: Optional media regions for validation
+            
+        Returns:
+            Tuple of (cache, remaining_tokens, hit_rate) where:
+            - cache: KV cache with matching segments already prefilled
+            - remaining_tokens: tokens that need prefilling (changed segments)
+            - hit_rate: percentage of prompt that was cached
+        """
+        total_len = len(prompt_tokens)
+        cache = make_kv_cache(model)
+        cached_len = 0
+        
+        # Process each segment independently
+        for segment_id, start, end, content_hash in segment_boundaries:
+            segment_len = end - start
+            if segment_len <= 0:
+                continue
+            
+            # Check if we have a cached version with matching hash
+            if segment_id in self.segmented_caches:
+                cached_tokens, cached_cache, cached_hash = self.segmented_caches[segment_id]
+                
+                if cached_hash == content_hash and len(cached_tokens) == segment_len:
+                    # Hash match - reuse this segment's cache
+                    logger.info(f"Segment '{segment_id}' cache hit: {segment_len} tokens")
+                    
+                    # Merge this segment's KV into the working cache
+                    for i, (src, dst) in enumerate(zip(cached_cache, cache)):
+                        if hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                            src_keys = src.keys
+                            src_vals = src.values
+                            
+                            if src_keys is not None and src_keys.shape[2] == segment_len:
+                                if dst.keys is None:
+                                    dst.keys = _detached_copy(src_keys)
+                                    dst.values = _detached_copy(src_vals)
+                                else:
+                                    # Append to existing cache
+                                    dst.keys = mx.concatenate([dst.keys, _detached_copy(src_keys)], axis=2)
+                                    dst.values = mx.concatenate([dst.values, _detached_copy(src_vals)], axis=2)
+                                
+                                dst.offset = cached_len + segment_len
+                                if hasattr(src, '_idx'):
+                                    dst._idx = cached_len + segment_len
+                    
+                    cached_len += segment_len
+                    continue
+            
+            # No cache hit - this segment needs prefilling
+            logger.info(f"Segment '{segment_id}' cache miss: {segment_len} tokens (hash changed or new)")
+        
+        # Remaining tokens need prefilling
+        remaining = prompt_tokens[cached_len:] if cached_len < total_len else mx.array([], dtype=prompt_tokens.dtype)
+        hit_rate = (cached_len / total_len * 100) if total_len > 0 else 0
+        
+        logger.info(f"Segmented cache: {cached_len}/{total_len} tokens cached ({hit_rate:.1f}%)")
+        
+        return cache, remaining, hit_rate
 
     def add_kv_cache(
         self,

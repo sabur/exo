@@ -581,10 +581,39 @@ def mlx_generate(
     prefix_hit_length = 0
     matched_index: int | None = None
     is_exact_hit = False
+    
+    # Structured cache separation: semantic boundaries with content hashes
+    # Calculate segment boundaries from prompt structure
+    # Format: [(segment_id, start_token, end_token, content_hash), ...]
+    segment_boundaries: list[tuple[str, int, int, str]] = []
+    
+    # Segment 1: System prompt
+    system_len = system_prompt_token_count(task, tokenizer)
+    if system_len > 0:
+        system_hash = hashlib.sha256(str(task.instructions).encode()).hexdigest() if task.instructions else "empty"
+        segment_boundaries.append(("system", 0, system_len, system_hash))
+    
+    # Segment 2+: Context and conversation (TODO: add proper boundary detection)
+    # For now, treat everything after system as one segment
+    if len(all_prompt_tokens) > system_len:
+        conv_hash = hashlib.sha256(str([m.content for m in task.input]).encode()).hexdigest()
+        segment_boundaries.append(("context_conv", system_len, len(all_prompt_tokens), conv_hash))
+    
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = all_prompt_tokens
+    elif task.use_structured_cache and kv_prefix_cache.segmented_caches:
+        # Use segmented cache with change detection
+        caches, prompt_tokens, hit_rate = kv_prefix_cache.get_segmented_cache(
+            model, all_prompt_tokens, segment_boundaries, media_regions=media_regions
+        )
+        prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
+        if prefix_hit_length > 0:
+            logger.info(
+                f"Segmented cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({hit_rate:.1f}%)"
+            )
     else:
+        # Use traditional token-level prefix cache
         caches, prompt_tokens, matched_index, is_exact_hit = (
             kv_prefix_cache.get_kv_cache(
                 model, all_prompt_tokens, media_regions=media_regions
@@ -674,6 +703,32 @@ def mlx_generate(
                 distributed_prompt_progress_callback,
             )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
+    
+    # Save segmented caches after first prefill
+    if kv_prefix_cache is not None and task.use_structured_cache:
+        for segment_id, start, end, content_hash in segment_boundaries:
+            if segment_id not in kv_prefix_cache.segmented_caches:
+                # First time seeing this segment - save its cache
+                segment_len = end - start
+                segment_cache = make_kv_cache(model)
+                
+                # Extract this segment's portion from the full cache
+                for i, (src, dst) in enumerate(zip(caches, segment_cache)):
+                    if hasattr(dst, 'keys') and hasattr(src, 'keys'):
+                        if src.keys is not None and src.keys.shape[2] >= end:
+                            dst.keys = _detached_copy(src.keys[:, :, start:end, :])
+                            dst.values = _detached_copy(src.values[:, :, start:end, :])
+                            dst.offset = segment_len
+                            if hasattr(src, '_idx'):
+                                dst._idx = min(src._idx, end) - start
+                
+                kv_prefix_cache.set_segment_cache(
+                    segment_id, 
+                    all_prompt_tokens[start:end], 
+                    segment_cache, 
+                    content_hash
+                )
+                logger.info(f"Segment '{segment_id}' cache saved: {segment_len} tokens")
 
     if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:
         prefill_tps = kv_prefix_cache.prefill_tps[matched_index]

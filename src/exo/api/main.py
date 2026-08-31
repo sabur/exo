@@ -469,7 +469,7 @@ class API:
     async def get_placement(
         self,
         model_id: ModelId,
-        sharding: Sharding = Sharding.Pipeline,
+        sharding: Sharding = Sharding.Tensor,  # Changed from Sharding.Pipeline for single-node performance
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
     ) -> Instance:
@@ -639,7 +639,7 @@ class API:
     async def await_instance(
         self,
         model_id: ModelId,
-        timeout_seconds: float = Query(default=0.0, ge=0.0, le=300.0),
+        timeout_seconds: float = Query(default=0.0, ge=0.0, le=3200.0),
     ) -> StreamingResponse:
         _sleep = 0.1
 

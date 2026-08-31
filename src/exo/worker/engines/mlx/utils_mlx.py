@@ -260,6 +260,18 @@ def shard_and_load(
 
     logger.info(f"Group size: {group.size()}, group rank: {group.rank()}")
 
+    # Apply windowed prefill patch for DeepSeek V4 models
+    # DISABLED: mlx-lm fork now includes this patch at module level
+    # This fixes quadratic prefill degradation on long contexts
+    # model_id_str = str(shard_metadata.model_card.model_id).lower()
+    # if "deepseek-v4" in model_id_str or "deepseek_v4" in model_id_str:
+    #     try:
+    #         from exo.worker.engines.mlx.windowed_prefill import apply as apply_windowed_prefill
+    #         if apply_windowed_prefill():
+    #             logger.info("Applied windowed prefill patch for DeepSeek V4")
+    #     except Exception as e:
+    #         logger.warning(f"Failed to apply windowed prefill patch: {e}")
+
     match shard_metadata:
         case TensorShardMetadata():
             logger.info(f"loading model from {model_path} with tensor parallelism")

@@ -175,6 +175,8 @@ async def chat_request_to_text_generation(
         presence_penalty=request.presence_penalty,
         frequency_penalty=request.frequency_penalty,
         images=images,
+        use_prefix_cache=True,  # Enable prefix caching by default
+        use_structured_cache=True,  # Enable semantic cache separation
     )
 
 

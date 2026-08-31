@@ -268,7 +268,7 @@ class HuggingFaceSearchResult(BaseModel):
 
 class PlaceInstanceParams(BaseModel):
     model_id: ModelId
-    sharding: Sharding = Sharding.Pipeline
+    sharding: Sharding = Sharding.Tensor  # Changed from Sharding.Pipeline for single-node performance
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
 
