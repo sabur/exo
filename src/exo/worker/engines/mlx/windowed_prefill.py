@@ -35,6 +35,52 @@ DEFAULT_BLOCK = 256
 _PATCHED = False
 
 
+@mx.compile
+def _blocked_window_attention_compiled(
+    q: mx.array,
+    kv: mx.array,
+    scale: float,
+    window: int,
+    q_start: int,
+    kv_start: int,
+    sinks: Optional[mx.array],
+    block: int,
+) -> mx.array:
+    """Compiled blocked sliding-window attention - fuses the Python loop."""
+    from mlx_lm.models.base import scaled_dot_product_attention
+
+    L = q.shape[2]
+    n_local = kv.shape[2]
+
+    outs = []
+    for i in range(0, L, block):
+        j = min(i + block, L)
+        lo = max(0, q_start + i - window + 1 - kv_start)
+        hi = min(n_local, q_start + j - kv_start)
+        if hi <= lo:
+            outs.append(mx.zeros_like(q[:, :, i:j, :]))
+            continue
+
+        qa = mx.arange(q_start + i, q_start + j)[:, None]
+        ka = mx.arange(kv_start + lo, kv_start + hi)[None, :]
+        m = (ka <= qa) & (ka > qa - window)
+        k_blk = kv[:, :, lo:hi, :]
+
+        outs.append(
+            scaled_dot_product_attention(
+                q[:, :, i:j, :],
+                k_blk,
+                k_blk,
+                cache=None,
+                scale=scale,
+                mask=m,
+                sinks=sinks,
+            )
+        )
+
+    return mx.concatenate(outs, axis=2)
+
+
 def blocked_window_attention(
     q: mx.array,
     kv: mx.array,
@@ -53,41 +99,10 @@ def blocked_window_attention(
     kv        (B, Hkv, n_local, D); local segment only
     kv_start  absolute position of `kv[..., 0, :]`
     """
-    from mlx_lm.models.base import scaled_dot_product_attention
-
-    L = q.shape[2]
-
-    outs = []
-    for i in range(0, L, block):
-        j = min(i + block, L)
-
-        # Queries [i, j) sit at absolute [q_start+i, q_start+j); a causal window
-        # of `window` means keys in absolute [q_start+i-window+1, q_start+j).
-        lo = max(0, q_start + i - window + 1 - kv_start)
-        hi = min(n_local, q_start + j - kv_start)
-        if hi <= lo:
-            outs.append(mx.zeros_like(q[:, :, i:j, :]))
-            continue
-
-        qa = mx.arange(q_start + i, q_start + j)[:, None]
-        ka = mx.arange(kv_start + lo, kv_start + hi)[None, :]
-        m = (ka <= qa) & (ka > qa - window)
-
-        k_blk = kv[:, :, lo:hi, :]
-
-        outs.append(
-            scaled_dot_product_attention(
-                q[:, :, i:j, :],
-                k_blk,
-                k_blk,
-                cache=None,
-                scale=scale,
-                mask=m,
-                sinks=sinks,
-            )
-        )
-
-    return mx.concatenate(outs, axis=2)
+    # Use compiled version to fuse the Python loop into single kernel dispatch
+    return _blocked_window_attention_compiled(
+        q, kv, scale, window, q_start, kv_start, sinks, block
+    )
 
 
 def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
