@@ -181,7 +181,8 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
             k_ret, _ = win_cache.update_and_fetch(k, k)
             window_kv = k_ret.squeeze(1)
         else:
-            window_kv = kv
+            # Add heads dimension: (B, L_kv, D) -> (B, 1, L_kv, D)
+            window_kv = kv[:, None, :, :]
 
         # Apply blocked window attention
         n_local = window_kv.shape[1]
