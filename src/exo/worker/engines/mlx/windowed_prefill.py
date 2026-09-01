@@ -130,6 +130,14 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
         # which require the full SDPA path.
         if self.compress_ratio != 0:
             return v4_orig(self, x, cache=cache)
+        
+        # Skip windowed prefill on layers with hyper-head compression.
+        # The blocked attention output shape may not match hc_pre expectations.
+        # Check if this layer has hc_attn (all DeepSeek V4 blocks do, but
+        # we guard anyway for safety).
+        if hasattr(self, 'n_groups') and self.n_groups != 1:
+            # Multi-group output projection - may have incompatible hc state
+            return v4_orig(self, x, cache=cache)
 
         # For prefill with long context, use blocked attention
         # We need to intercept after q/kv projection but before SDPA
