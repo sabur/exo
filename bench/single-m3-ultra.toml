@@ -177,10 +177,6 @@ model = "mlx-community/GLM-4.7-6bit"
 extra_constraints = ["All(Memory(>=512GiB))"]
 
 [[benchmark]]
-model = "mlx-community/GLM-4.7-8bit-gs32"
-extra_constraints = ["All(Memory(>=512GiB))"]
-
-[[benchmark]]
 model = "mlx-community/Qwen3-235B-A22B-Instruct-2507-8bit"
 extra_constraints = ["All(Memory(>=512GiB))"]
 
