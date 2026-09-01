@@ -176,10 +176,11 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
         q, kv = _attn_qkv_partial_rope(q, kv, offset, rd, self.rope.freqs)
 
         # Get KV from cache
-        k = kv[:, None, :, :]
+        k = kv[:, None, :, :]  # (B, 1, L_kv, D)
         if win_cache is not None:
             k_ret, _ = win_cache.update_and_fetch(k, k)
-            window_kv = k_ret.squeeze(1)
+            # Keep heads dimension for blocked_window_attention
+            window_kv = k_ret
         else:
             # Add heads dimension: (B, L_kv, D) -> (B, 1, L_kv, D)
             window_kv = kv[:, None, :, :]
