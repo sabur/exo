@@ -171,6 +171,17 @@ def load_mlx_items(
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
+        
+        # Apply windowed prefill patch for DeepSeek V4 models (single-node path)
+        model_id_str = str(bound_instance.bound_shard.model_card.model_id).lower()
+        if "deepseek-v4" in model_id_str or "deepseek_v4" in model_id_str:
+            try:
+                from exo.worker.engines.mlx.windowed_prefill import apply as apply_windowed_prefill
+                if apply_windowed_prefill():
+                    logger.info("Applied windowed prefill patch for DeepSeek V4 (single-node)")
+            except Exception as e:
+                logger.warning(f"Failed to apply windowed prefill patch: {e}")
+        
         start_time = time.perf_counter()
         model, _ = load_model(model_path, lazy=True, strict=False)
         # Eval layers one by one for progress reporting
