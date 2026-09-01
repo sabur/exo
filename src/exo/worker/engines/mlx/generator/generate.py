@@ -156,6 +156,15 @@ class PrefillCancelled(BaseException):
     """Raised when prefill is cancelled via the progress callback."""
 
 
+def _mlx_memory_mib() -> tuple[float, float, float]:
+    bytes_per_mib = 1024 * 1024
+    return (
+        mx.get_active_memory() / bytes_per_mib,
+        mx.get_cache_memory() / bytes_per_mib,
+        mx.get_peak_memory() / bytes_per_mib,
+    )
+
+
 def _has_pipeline_communication_layer(model: Model):
     for layer in model.layers:
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
@@ -303,11 +312,11 @@ def prefill(
     if num_tokens == 0:
         return 0.0, 0, []
 
-    # INSTRUMENTATION (Ink 2026-09-01): Log memory state at prefill start
-    initial_mem = mx.get_memory_info()
+    initial_active_mib, initial_cached_mib, initial_peak_mib = _mlx_memory_mib()
     logger.info(
         f"[INSTRUMENT] Prefill start: {num_tokens} tokens | "
-        f"Memory: active={initial_mem.active_mb:.1f}MB, cached={initial_mem.cached_mb:.1f}MB, peak={initial_mem.peak_mb:.1f}MB"
+        f"Memory: active={initial_active_mib:.1f}MiB, "
+        f"cached={initial_cached_mib:.1f}MiB, peak={initial_peak_mib:.1f}MiB"
     )
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
@@ -322,6 +331,14 @@ def prefill(
         logger.debug(
             f"Prefill progress: {processed}/{total} tokens ({tok_per_sec:.1f} tok/s)"
         )
+        if processed > 0:
+            active_mib, cached_mib, peak_mib = _mlx_memory_mib()
+            logger.info(
+                f"[INSTRUMENT] Prefill progress: {processed}/{total} tokens "
+                f"({tok_per_sec:.1f} tok/s) | "
+                f"Memory: active={active_mib:.1f}MiB, "
+                f"cached={cached_mib:.1f}MiB, peak={peak_mib:.1f}MiB"
+            )
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
@@ -397,15 +414,16 @@ def prefill(
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
-    
-    # INSTRUMENTATION (Ink 2026-09-01): Log memory state at prefill end
-    final_mem = mx.get_memory_info()
+    final_active_mib, final_cached_mib, final_peak_mib = _mlx_memory_mib()
     logger.info(
-        f"[INSTRUMENT] Prefill complete: {num_tokens} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tok/s) | "
-        f"Memory: active={final_mem.active_mb:.1f}MB, cached={final_mem.cached_mb:.1f}MB, peak={final_mem.peak_mb:.1f}MB | "
-        f"Delta: active={final_mem.active_mb - initial_mem.active_mb:+.1f}MB, cached={final_mem.cached_mb - initial_mem.cached_mb:+.1f}MB"
+        f"[INSTRUMENT] Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
+        f"({tokens_per_sec:.1f} tok/s) | "
+        f"Memory: active={final_active_mib:.1f}MiB, "
+        f"cached={final_cached_mib:.1f}MiB, peak={final_peak_mib:.1f}MiB | "
+        f"Delta: active={final_active_mib - initial_active_mib:+.1f}MiB, "
+        f"cached={final_cached_mib - initial_cached_mib:+.1f}MiB"
     )
-    
+
     # Exclude the last snapshot
     return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
 
