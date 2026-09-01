@@ -124,6 +124,12 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
         # Skip blocking for short sequences or decode (S=1)
         if S < min_len or S == 1:
             return v4_orig(self, x, cache=cache)
+        
+        # Only apply blocked attention for non-compressor layers.
+        # Compressor layers use compressed pool + visibility masks
+        # which require the full SDPA path.
+        if self.compress_ratio != 0:
+            return v4_orig(self, x, cache=cache)
 
         # For prefill with long context, use blocked attention
         # We need to intercept after q/kv projection but before SDPA
@@ -194,7 +200,7 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
         # Fused: inverse-RoPE + transpose/flatten
         from mlx_lm.models.deepseek_v4 import _attn_inv_rope_flatten
         o = _attn_inv_rope_flatten(
-            o, offset, rd, self.rope.freqs, self.n_heads * self.head_dim
+            out, offset, rd, self.rope.freqs, self.n_heads * self.head_dim
         )
 
         # Output projection
