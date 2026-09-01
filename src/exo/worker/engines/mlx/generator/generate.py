@@ -303,6 +303,13 @@ def prefill(
     if num_tokens == 0:
         return 0.0, 0, []
 
+    # INSTRUMENTATION (Ink 2026-09-01): Log memory state at prefill start
+    initial_mem = mx.get_memory_info()
+    logger.info(
+        f"[INSTRUMENT] Prefill start: {num_tokens} tokens | "
+        f"Memory: active={initial_mem.active_mb:.1f}MB, cached={initial_mem.cached_mb:.1f}MB, peak={initial_mem.peak_mb:.1f}MB"
+    )
+
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
@@ -390,10 +397,15 @@ def prefill(
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = num_tokens / elapsed if elapsed > 0 else 0.0
-    logger.debug(
-        f"Prefill complete: {num_tokens} tokens in {elapsed:.2f}s "
-        f"({tokens_per_sec:.1f} tok/s)"
+    
+    # INSTRUMENTATION (Ink 2026-09-01): Log memory state at prefill end
+    final_mem = mx.get_memory_info()
+    logger.info(
+        f"[INSTRUMENT] Prefill complete: {num_tokens} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tok/s) | "
+        f"Memory: active={final_mem.active_mb:.1f}MB, cached={final_mem.cached_mb:.1f}MB, peak={final_mem.peak_mb:.1f}MB | "
+        f"Delta: active={final_mem.active_mb - initial_mem.active_mb:+.1f}MB, cached={final_mem.cached_mb - initial_mem.cached_mb:+.1f}MB"
     )
+    
     # Exclude the last snapshot
     return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
 
