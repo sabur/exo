@@ -323,9 +323,11 @@ def prefill(
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
     snapshots: list[CacheSnapshot] = []
+    wsdpa_status_logged = False
 
     # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
+        nonlocal wsdpa_status_logged
         elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
         logger.debug(
@@ -339,6 +341,25 @@ def prefill(
                 f"Memory: active={active_mib:.1f}MiB, "
                 f"cached={cached_mib:.1f}MiB, peak={peak_mib:.1f}MiB"
             )
+            if (
+                not wsdpa_status_logged
+                and getattr(model, "model_type", None) == "deepseek_v4"
+            ):
+                try:
+                    from mlx_lm.models.deepseek_v4_wsdpa import (
+                        wsdpa_prefill_route_active,
+                    )
+                except ImportError:
+                    logger.debug(
+                        "DeepSeek V4 WSDPA route instrumentation is unavailable"
+                    )
+                else:
+                    logger.info(
+                        "[INSTRUMENT] DeepSeek V4 WSDPA routes: "
+                        f"pooled={wsdpa_prefill_route_active()}, "
+                        f"topk={wsdpa_prefill_route_active(topk=True)}"
+                    )
+                wsdpa_status_logged = True
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
