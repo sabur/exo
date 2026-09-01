@@ -1,21 +1,24 @@
 # type: ignore
 import time
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import mlx.core as mx
 import pytest
 from mlx_lm.models.cache import KVCache
+from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 from mlx_lm.sample_utils import make_sampler
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
     KVPrefixCache,
     cache_length,
     encode_prompt,
     get_prefix_length,
     make_kv_cache,
+    trim_cache,
 )
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
 from exo.worker.engines.mlx.types import Model
@@ -28,6 +31,21 @@ from exo.worker.tests.unittests.test_mlx.conftest import (
 
 def _check_model_exists() -> bool:
     return DEFAULT_GPT_OSS_CONFIG.model_path.exists()
+
+
+def _make_v4_cache(offset: int, pool_rows: int) -> DeepseekV4Cache:
+    cache = DeepseekV4Cache(sliding_window=8)
+    keys = mx.arange(32, dtype=mx.float32).reshape(1, 1, 8, 4) + offset
+    cache.local.keys = keys
+    cache.local.values = keys + 0.5
+    cache.local.offset = offset
+    cache.local._idx = 8
+
+    for key, fill in (("compressor", 1.0), ("indexer", 2.0)):
+        branch = cache._branches[key]
+        branch.pool = mx.full((1, pool_rows, 4), fill * offset)
+        branch.pool_lengths = None
+    return cache
 
 
 class TestGetPrefixLength:
@@ -104,6 +122,59 @@ class TestKVPrefix:
         cache = KVPrefixCache(None)
         cache.clear()
         assert len(cache.prompts) == 0
+
+    def test_trim_cache_restores_deepseek_v4_snapshot(self):
+        snapshot_cache = _make_v4_cache(offset=12, pool_rows=3)
+        live_cache = _make_v4_cache(offset=100, pool_rows=25)
+        snapshot = CacheSnapshot(states=[snapshot_cache], token_count=12)
+        cache = [live_cache]
+
+        trim_cache(cache, num_tokens=88, snapshot=snapshot)
+
+        restored = cast(DeepseekV4Cache, cache[0])
+        assert restored is not live_cache
+        assert restored.offset == 12
+        assert restored.local._idx == 8
+        assert mx.array_equal(restored.local.keys, snapshot_cache.local.keys)
+        assert mx.array_equal(
+            restored._branches["compressor"].pool,
+            snapshot_cache._branches["compressor"].pool,
+        )
+        assert mx.array_equal(
+            restored._branches["indexer"].pool,
+            snapshot_cache._branches["indexer"].pool,
+        )
+
+    def test_partial_v4_prefix_hit_restores_snapshot_before_suffix(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [
+                cached_prompt[:12],
+                mx.arange(1000, 1101, dtype=mx.int32),
+            ]
+        )
+        snapshot = CacheSnapshot(
+            states=[_make_v4_cache(offset=12, pool_rows=3)],
+            token_count=12,
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [cached_prompt]
+        prefix_cache.caches = [[_make_v4_cache(offset=100, pool_rows=25)]]
+        prefix_cache._snapshots = [[snapshot]]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [0]
+        prefix_cache.prefill_tps = [0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 12
+        assert mx.array_equal(remaining, query[12:])
+        restored_v4 = cast(DeepseekV4Cache, restored[0])
+        assert restored_v4._branches["compressor"].pool.shape[1] == 3
 
 
 def _load_gpt_oss() -> tuple[Model, object]:

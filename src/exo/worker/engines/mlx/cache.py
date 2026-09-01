@@ -235,7 +235,7 @@ def is_non_trimmable_cache_entry(c: object) -> bool:
 
 
 def has_non_kv_caches(cache: KVCacheType) -> bool:
-    """Check if a cache contains any ArraysCache (SSM) entries."""
+    """Check whether any cache entry requires snapshot-based restoration."""
     return any(is_non_trimmable_cache_entry(c) for c in cache)
 
 
@@ -629,9 +629,7 @@ def trim_cache(
     snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
-        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
-            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
-        )
+        non_trimmable = is_non_trimmable_cache_entry(c)
         if non_trimmable:
             if snapshot is not None and snapshot.states[i] is not None:
                 restored = copy_snapshot_entry(snapshot.states[i])
@@ -642,6 +640,8 @@ def trim_cache(
                 if isinstance(c, RotatingKVCache):
                     c.offset = 0
                     c._idx = 0
+            elif isinstance(c, DeepseekV4Cache):
+                cache[i] = DeepseekV4Cache(c.local.max_size)  # type: ignore
             else:
                 # CacheList without a snapshot — zero each inner cache's state
                 for inner in c:  # type: ignore[reportUnknownVariableType]
