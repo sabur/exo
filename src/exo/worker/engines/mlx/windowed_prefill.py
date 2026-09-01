@@ -215,6 +215,7 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
 
         # Output projection
         o = self._grouped_output_projection(o)
+        o = self.wo_b(o)
         return o
 
     dsv4.V4Attention.__call__ = v4_call
