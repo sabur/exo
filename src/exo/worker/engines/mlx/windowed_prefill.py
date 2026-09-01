@@ -194,7 +194,7 @@ def apply(block: int = DEFAULT_BLOCK, min_len: int = MIN_PREFILL_LEN) -> bool:
             window_kv = kv[:, None, :, :]
 
         # Apply blocked window attention
-        n_local = window_kv.shape[1]
+        n_local = window_kv.shape[2]  # [B,Hkv,Lkv,D] → Lkv is at index 2
         out = blocked_window_attention(
             q,
             window_kv,
