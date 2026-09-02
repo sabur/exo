@@ -231,23 +231,71 @@ class TestKVPrefix:
         assert matched_index is None
         assert not is_exact
 
-    def test_v4_add_evicts_previous_entry_at_default_cap(self):
+    def test_v4_add_evicts_previous_entry_at_cap_one(self):
         prefix_cache = KVPrefixCache(None)
 
         first_prompt = mx.arange(12, dtype=mx.int32)
         first_cache = [_make_v4_cache(offset=12, pool_rows=3)]
         first_snapshot = CacheSnapshot(states=first_cache, token_count=12)
-        prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
 
         second_prompt = mx.arange(20, dtype=mx.int32)
         second_cache = [_make_v4_cache(offset=20, pool_rows=5)]
         second_snapshot = CacheSnapshot(states=second_cache, token_count=20)
-        prefix_cache.add_kv_cache(second_prompt, second_cache, [second_snapshot])
+
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
+        ):
+            prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
+            prefix_cache.add_kv_cache(
+                second_prompt, second_cache, [second_snapshot]
+            )
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+
+    def test_v4_add_retains_five_entries_and_evicts_the_lru(self):
+        prefix_cache = KVPrefixCache(None)
+
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
+        ):
+            for token_count in range(12, 72, 12):
+                prompt = mx.arange(token_count, dtype=mx.int32)
+                cache = [
+                    _make_v4_cache(
+                        offset=token_count,
+                        pool_rows=token_count // 4,
+                    )
+                ]
+                snapshot = CacheSnapshot(
+                    states=cache,
+                    token_count=token_count,
+                )
+                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+            assert len(prefix_cache.prompts) == 5
+
+            prompt = mx.arange(72, dtype=mx.int32)
+            cache = [_make_v4_cache(offset=72, pool_rows=18)]
+            snapshot = CacheSnapshot(states=cache, token_count=72)
+            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        assert len(prefix_cache.prompts) == 5
+        assert [len(prompt) for prompt in prefix_cache.prompts] == [
+            24,
+            36,
+            48,
+            60,
+            72,
+        ]
+        assert all(snapshots is not None for snapshots in prefix_cache._snapshots)
+        assert [
+            snapshots[0].token_count
+            for snapshots in prefix_cache._snapshots
+            if snapshots is not None
+        ] == [24, 36, 48, 60, 72]
 
     def test_v4_update_retains_only_latest_snapshot(self):
         prefix_cache = KVPrefixCache(None)

@@ -56,7 +56,7 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 
 
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
-    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 1
+    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 5
 )
 
 
@@ -487,7 +487,10 @@ class KVPrefixCache:
             raise
 
         self._access_counter = access_counter
-        logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
+        logger.info(
+            f"KV cache added (index {start_length}): "
+            f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries"
+        )
         if is_v4 and stored_snapshots:
             logger.info(
                 "DeepSeek V4 prefix cache retained "
@@ -611,6 +614,11 @@ class KVPrefixCache:
                 best_index, best_length = i, length
 
         if best_index is None:
+            if self.prompts:
+                logger.info(
+                    "KV cache miss: no common token prefix across "
+                    f"{len(self.prompts)} entries"
+                )
             return make_kv_cache(model), prompt_tokens, None, False
 
         # For exact match: trim to max_length-1 so remaining has the last token
@@ -627,6 +635,16 @@ class KVPrefixCache:
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
+            snapshot_positions = [
+                snapshot.token_count
+                for snapshot in self._snapshots[best_index] or []
+            ]
+            logger.info(
+                "KV cache match cannot be restored: "
+                f"entry={best_index}, matched={best_length}/{max_length}, "
+                f"cached={cached_length}, snapshots={snapshot_positions}; "
+                "using fresh cache"
+            )
             return make_kv_cache(model), prompt_tokens, None, False
 
         prompt_cache = deepcopy(self.caches[best_index])
@@ -729,7 +747,8 @@ class KVPrefixCache:
         self._last_used.pop(index)
         self.prefill_tps.pop(index)
         logger.info(
-            f"KV cache evicted LRU entry ({evicted_tokens} tokens): {reason}"
+            f"KV cache evicted LRU entry index {index} "
+            f"({evicted_tokens} tokens): {reason}"
         )
 
     def get_memory_used_percentage(self) -> float:
