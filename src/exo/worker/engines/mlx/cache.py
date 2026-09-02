@@ -48,6 +48,18 @@ _MEMORY_THRESHOLD = float(
 )
 
 
+def _read_non_negative_int_env(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be greater than or equal to zero")
+    return value
+
+
+_V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
+    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 1
+)
+
+
 class CacheSnapshot:
     """Snapshot of states at a known token position."""
 
@@ -60,6 +72,24 @@ class CacheSnapshot:
     ):
         self.states = states
         self.token_count = token_count
+
+    @property
+    def nbytes(self) -> int:
+        return sum(_cache_state_nbytes(state) for state in self.states)
+
+
+def _cache_state_nbytes(state: object | None) -> int:
+    if state is None:
+        return 0
+    if isinstance(state, ArraysCache):
+        return sum(
+            int(entry.nbytes)
+            for entry in state.cache  # type: ignore[reportUnknownMemberType]
+            if isinstance(entry, mx.array)
+        )
+    if isinstance(state, CacheList):
+        return sum(_cache_state_nbytes(entry) for entry in state)
+    return int(getattr(state, "nbytes", 0))
 
 
 def _detached_copy(a: mx.array) -> mx.array:
@@ -239,6 +269,19 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
     return any(is_non_trimmable_cache_entry(c) for c in cache)
 
 
+def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
+    return any(isinstance(c, DeepseekV4Cache) for c in cache)
+
+
+def _latest_snapshot(
+    snapshots: list[CacheSnapshot] | None,
+) -> list[CacheSnapshot] | None:
+    if not snapshots:
+        return None
+    latest = max(snapshots, key=lambda snapshot: snapshot.token_count)
+    return [latest]
+
+
 class KVPrefixCache:
     def __init__(self, group: mx.distributed.Group | None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
@@ -411,15 +454,46 @@ class KVPrefixCache:
         prefill_tps: float = 0.0,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
+        is_v4 = has_deepseek_v4_cache(cache)
+        if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
+            logger.info("DeepSeek V4 prefix cache persistence is disabled")
+            return
+
+        stored_cache = deepcopy(cache)
+        stored_snapshots = _latest_snapshot(ssm_snapshots) if is_v4 else ssm_snapshots
+        if is_v4:
+            self._evict_v4_entries_for_add()
         self._evict_if_needed()
-        self.prompts.append(prompt_tokens)
-        self.caches.append(deepcopy(cache))
-        self._snapshots.append(ssm_snapshots)
-        self._media_regions.append(media_regions or [])
-        self.prefill_tps.append(prefill_tps)
-        self._access_counter += 1
-        self._last_used.append(self._access_counter)
+
+        access_counter = self._access_counter + 1
+        start_length = len(self.prompts)
+        try:
+            self.prompts.append(prompt_tokens)
+            self.caches.append(stored_cache)
+            self._snapshots.append(stored_snapshots)
+            self._media_regions.append(media_regions or [])
+            self.prefill_tps.append(prefill_tps)
+            self._last_used.append(access_counter)
+        except Exception:
+            for collection in (
+                self.prompts,
+                self.caches,
+                self._snapshots,
+                self._media_regions,
+                self.prefill_tps,
+                self._last_used,
+            ):
+                del collection[start_length:]
+            raise
+
+        self._access_counter = access_counter
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
+        if is_v4 and stored_snapshots:
+            logger.info(
+                "DeepSeek V4 prefix cache retained "
+                f"{len(stored_snapshots)} snapshot "
+                f"({stored_snapshots[0].nbytes / (1 << 20):.1f} MiB)"
+            )
 
     def update_kv_cache(
         self,
@@ -433,20 +507,46 @@ class KVPrefixCache:
     ):
         """Update an existing cache entry in-place."""
         old_snapshots = self._snapshots[index]
-        merged: list[CacheSnapshot] = []
-        if old_snapshots:
-            merged = [s for s in old_snapshots if s.token_count <= restore_pos]
-        if snapshots:
-            merged.extend(snapshots)
+        is_v4 = has_deepseek_v4_cache(cache)
+        if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
+            self._evict_entry(index, "DeepSeek V4 prefix persistence disabled")
+            gc.collect()
+            mx.clear_cache()
+            return
 
+        if is_v4:
+            eligible = [
+                snapshot
+                for snapshot in old_snapshots or []
+                if snapshot.token_count <= restore_pos
+            ]
+            eligible.extend(snapshots or [])
+            stored_snapshots = _latest_snapshot(eligible)
+        else:
+            merged: list[CacheSnapshot] = []
+            if old_snapshots:
+                merged = [s for s in old_snapshots if s.token_count <= restore_pos]
+            if snapshots:
+                merged.extend(snapshots)
+            stored_snapshots = merged or None
+
+        stored_cache = deepcopy(cache)
+        stored_media_regions = media_regions or []
+        access_counter = self._access_counter + 1
         self.prompts[index] = prompt_tokens
-        self.caches[index] = deepcopy(cache)
-        self._snapshots[index] = merged or None
-        self._media_regions[index] = media_regions or []
+        self.caches[index] = stored_cache
+        self._snapshots[index] = stored_snapshots
+        self._media_regions[index] = stored_media_regions
         self.prefill_tps[index] = prefill_tps
-        self._access_counter += 1
-        self._last_used[index] = self._access_counter
+        self._access_counter = access_counter
+        self._last_used[index] = access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+        if is_v4 and stored_snapshots:
+            logger.info(
+                "DeepSeek V4 prefix cache retained "
+                f"{len(stored_snapshots)} snapshot "
+                f"({stored_snapshots[0].nbytes / (1 << 20):.1f} MiB)"
+            )
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -591,22 +691,46 @@ class KVPrefixCache:
             and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
             lru_index = self._last_used.index(min(self._last_used))
-            evicted_tokens = len(self.prompts[lru_index])
-            self.prompts.pop(lru_index)
-            self.caches.pop(lru_index)
-            self._snapshots.pop(lru_index)
-            self._media_regions.pop(lru_index)
-            self._last_used.pop(lru_index)
-            self.prefill_tps.pop(lru_index)
-
+            self._evict_entry(lru_index, "memory pressure")
             evicted_any = True
-            logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
-            )
 
         if evicted_any:
             gc.collect()
             mx.clear_cache()
+
+    def _evict_v4_entries_for_add(self) -> None:
+        evicted_any = False
+        while (
+            sum(has_deepseek_v4_cache(cache) for cache in self.caches)
+            >= _V4_PREFIX_CACHE_MAX_ENTRIES
+        ):
+            candidates = [
+                index
+                for index, cache in enumerate(self.caches)
+                if has_deepseek_v4_cache(cache)
+            ]
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
+            self._evict_entry(
+                lru_index,
+                f"DeepSeek V4 entry cap {_V4_PREFIX_CACHE_MAX_ENTRIES}",
+            )
+            evicted_any = True
+
+        if evicted_any:
+            gc.collect()
+            mx.clear_cache()
+
+    def _evict_entry(self, index: int, reason: str) -> None:
+        evicted_tokens = len(self.prompts[index])
+        self.prompts.pop(index)
+        self.caches.pop(index)
+        self._snapshots.pop(index)
+        self._media_regions.pop(index)
+        self._last_used.pop(index)
+        self.prefill_tps.pop(index)
+        logger.info(
+            f"KV cache evicted LRU entry ({evicted_tokens} tokens): {reason}"
+        )
 
     def get_memory_used_percentage(self) -> float:
         local_pressure: float = get_memory_used_percentage()

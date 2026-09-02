@@ -46,6 +46,7 @@ from exo.worker.engines.mlx.cache import (
     KVPrefixCache,
     copy_snapshot_entry,
     encode_prompt,
+    has_deepseek_v4_cache,
     has_non_kv_caches,
     is_non_trimmable_cache_entry,
     make_kv_cache,
@@ -322,12 +323,14 @@ def prefill(
     logger.debug(f"Prefilling {num_tokens} tokens...")
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
+    has_v4 = has_deepseek_v4_cache(cache)
     snapshots: list[CacheSnapshot] = []
+    v4_pre_gen_snapshot: CacheSnapshot | None = None
     wsdpa_status_logged = False
 
     # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
-        nonlocal wsdpa_status_logged
+        nonlocal v4_pre_gen_snapshot, wsdpa_status_logged
         elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
         logger.debug(
@@ -360,7 +363,15 @@ def prefill(
                         f"topk={wsdpa_prefill_route_active(topk=True)}"
                     )
                 wsdpa_status_logged = True
-        if has_ssm:
+        if has_v4:
+            if processed == total - 1 and v4_pre_gen_snapshot is None:
+                v4_pre_gen_snapshot = snapshot_ssm_states(cache)
+                logger.info(
+                    "[INSTRUMENT] DeepSeek V4 pre-generation snapshot: "
+                    f"tokens={v4_pre_gen_snapshot.token_count}, "
+                    f"memory={v4_pre_gen_snapshot.nbytes / (1 << 20):.1f}MiB"
+                )
+        elif has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
 
         if on_prefill_progress is not None:
@@ -421,7 +432,14 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    pre_gen = snapshots[-2] if has_ssm else None
+    if has_v4:
+        if v4_pre_gen_snapshot is None:
+            raise RuntimeError(
+                "DeepSeek V4 prefill did not capture the pre-generation cache state"
+            )
+        pre_gen = v4_pre_gen_snapshot
+    else:
+        pre_gen = snapshots[-2] if has_ssm else None
     for i, c in enumerate(cache):
         non_trimmable = is_non_trimmable_cache_entry(c)
         if has_ssm and non_trimmable:
@@ -444,6 +462,9 @@ def prefill(
         f"Delta: active={final_active_mib - initial_active_mib:+.1f}MiB, "
         f"cached={final_cached_mib - initial_cached_mib:+.1f}MiB"
     )
+
+    if has_v4:
+        return tokens_per_sec, num_tokens, [v4_pre_gen_snapshot]
 
     # Exclude the last snapshot
     return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []

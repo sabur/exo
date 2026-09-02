@@ -18,6 +18,7 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     get_prefix_length,
     make_kv_cache,
+    snapshot_ssm_states,
     trim_cache,
 )
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
@@ -175,6 +176,231 @@ class TestKVPrefix:
         assert mx.array_equal(remaining, query[12:])
         restored_v4 = cast(DeepseekV4Cache, restored[0])
         assert restored_v4._branches["compressor"].pool.shape[1] == 3
+
+    def test_final_v4_snapshot_supports_append_only_hit(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        snapshot = CacheSnapshot(
+            states=[_make_v4_cache(offset=98, pool_rows=24)],
+            token_count=98,
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [cached_prompt]
+        prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
+        prefix_cache._snapshots = [[snapshot]]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [0]
+        prefix_cache.prefill_tps = [0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 98
+        assert mx.array_equal(remaining, query[98:])
+
+    def test_v4_mutation_before_final_snapshot_falls_back_to_fresh_prefill(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [cached_prompt[:12], mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        snapshot = CacheSnapshot(
+            states=[_make_v4_cache(offset=98, pool_rows=24)],
+            token_count=98,
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [cached_prompt]
+        prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
+        prefix_cache._snapshots = [[snapshot]]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [0]
+        prefix_cache.prefill_tps = [0.0]
+        model = MagicMock(spec=[])
+        model.layers = []
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            model, query
+        )
+
+        assert restored == []
+        assert mx.array_equal(remaining, query)
+        assert matched_index is None
+        assert not is_exact
+
+    def test_v4_add_evicts_previous_entry_at_default_cap(self):
+        prefix_cache = KVPrefixCache(None)
+
+        first_prompt = mx.arange(12, dtype=mx.int32)
+        first_cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        first_snapshot = CacheSnapshot(states=first_cache, token_count=12)
+        prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
+
+        second_prompt = mx.arange(20, dtype=mx.int32)
+        second_cache = [_make_v4_cache(offset=20, pool_rows=5)]
+        second_snapshot = CacheSnapshot(states=second_cache, token_count=20)
+        prefix_cache.add_kv_cache(second_prompt, second_cache, [second_snapshot])
+
+        assert len(prefix_cache.prompts) == 1
+        assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
+        assert prefix_cache._snapshots[0] is not None
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+
+    def test_v4_update_retains_only_latest_snapshot(self):
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [mx.arange(12, dtype=mx.int32)]
+        prefix_cache.caches = [[_make_v4_cache(offset=12, pool_rows=3)]]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=4, pool_rows=1)],
+                    token_count=4,
+                ),
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=8, pool_rows=2)],
+                    token_count=8,
+                ),
+            ]
+        ]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [1]
+        prefix_cache.prefill_tps = [0.0]
+
+        updated_cache = [_make_v4_cache(offset=20, pool_rows=5)]
+        prefix_cache.update_kv_cache(
+            0,
+            mx.arange(20, dtype=mx.int32),
+            updated_cache,
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=16, pool_rows=4)],
+                    token_count=16,
+                ),
+                CacheSnapshot(states=updated_cache, token_count=20),
+            ],
+            restore_pos=8,
+        )
+
+        assert prefix_cache._snapshots[0] is not None
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+
+    def test_v4_persistence_can_be_disabled(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0
+        ):
+            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        assert prefix_cache.prompts == []
+        assert prefix_cache.caches == []
+        assert prefix_cache._snapshots == []
+
+    def test_add_failure_keeps_parallel_collections_aligned(self):
+        prefix_cache = KVPrefixCache(None)
+
+        with patch(
+            "exo.worker.engines.mlx.cache.deepcopy",
+            side_effect=RuntimeError("copy failed"),
+        ):
+            with pytest.raises(RuntimeError, match="copy failed"):
+                prefix_cache.add_kv_cache(
+                    mx.arange(4, dtype=mx.int32),
+                    [KVCache()],
+                )
+
+        lengths = {
+            len(prefix_cache.prompts),
+            len(prefix_cache.caches),
+            len(prefix_cache._snapshots),
+            len(prefix_cache._media_regions),
+            len(prefix_cache._last_used),
+            len(prefix_cache.prefill_tps),
+        }
+        assert lengths == {0}
+
+    def test_v4_replacement_copy_failure_preserves_existing_entry(self):
+        prefix_cache = KVPrefixCache(None)
+        first_prompt = mx.arange(12, dtype=mx.int32)
+        first_cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        first_snapshot = CacheSnapshot(states=first_cache, token_count=12)
+        prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
+
+        with patch(
+            "exo.worker.engines.mlx.cache.deepcopy",
+            side_effect=RuntimeError("copy failed"),
+        ):
+            with pytest.raises(RuntimeError, match="copy failed"):
+                prefix_cache.add_kv_cache(
+                    mx.arange(20, dtype=mx.int32),
+                    [_make_v4_cache(offset=20, pool_rows=5)],
+                    [
+                        CacheSnapshot(
+                            states=[_make_v4_cache(offset=20, pool_rows=5)],
+                            token_count=20,
+                        )
+                    ],
+                )
+
+        assert len(prefix_cache.prompts) == 1
+        assert mx.array_equal(prefix_cache.prompts[0], first_prompt)
+        assert prefix_cache._snapshots[0] is not None
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [12]
+
+    def test_v4_prefill_captures_only_pre_generation_snapshot(self):
+        prompt_tokens = mx.arange(8193, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=0, pool_rows=0)]
+        model = MagicMock()
+        model.layers = []
+
+        def fake_stream_generate(*, prompt, prompt_cache, prompt_progress_callback, **_):
+            total = len(prompt)
+            prompt_progress_callback(0, total)
+            prompt_cache[0] = _make_v4_cache(offset=4096, pool_rows=1024)
+            prompt_progress_callback(4096, total)
+            prompt_cache[0] = _make_v4_cache(
+                offset=total - 1,
+                pool_rows=(total - 1) // 4,
+            )
+            prompt_progress_callback(total - 1, total)
+            prompt_cache[0] = _make_v4_cache(
+                offset=total + 1,
+                pool_rows=(total + 1) // 4,
+            )
+            prompt_progress_callback(total, total)
+            yield object()
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate.stream_generate",
+                new=fake_stream_generate,
+            ),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.snapshot_ssm_states",
+                wraps=snapshot_ssm_states,
+            ) as snapshot_mock,
+        ):
+            _, _, snapshots = prefill(
+                model,
+                MagicMock(),
+                MagicMock(),
+                prompt_tokens,
+                cache,
+                group=None,
+                on_prefill_progress=None,
+                distributed_prompt_progress_callback=None,
+            )
+
+        assert snapshot_mock.call_count == 1
+        assert len(snapshots) == 1
+        assert snapshots[0].token_count == len(prompt_tokens) - 1
+        assert cache_length(cache) == len(prompt_tokens) - 1
 
 
 def _load_gpt_oss() -> tuple[Model, object]:
