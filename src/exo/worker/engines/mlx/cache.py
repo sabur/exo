@@ -59,6 +59,9 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 5
 )
 
+# Retain two tail-safe rollback points plus the exact pre-generation state.
+_V4_PREFIX_CACHE_MAX_SNAPSHOTS_PER_ENTRY = 3
+
 
 class CacheSnapshot:
     """Snapshot of states at a known token position."""
@@ -273,13 +276,28 @@ def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
     return any(isinstance(c, DeepseekV4Cache) for c in cache)
 
 
-def _latest_snapshot(
+def _latest_snapshots(
     snapshots: list[CacheSnapshot] | None,
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
-    latest = max(snapshots, key=lambda snapshot: snapshot.token_count)
-    return [latest]
+    snapshots_by_position = {
+        snapshot.token_count: snapshot for snapshot in snapshots
+    }
+    ordered = sorted(
+        snapshots_by_position.values(),
+        key=lambda snapshot: snapshot.token_count,
+    )
+    return ordered[-_V4_PREFIX_CACHE_MAX_SNAPSHOTS_PER_ENTRY:]
+
+
+def _log_v4_snapshot_retention(snapshots: list[CacheSnapshot]) -> None:
+    label = "snapshot" if len(snapshots) == 1 else "snapshots"
+    retained_mib = sum(snapshot.nbytes for snapshot in snapshots) / (1 << 20)
+    logger.info(
+        "DeepSeek V4 prefix cache retained "
+        f"{len(snapshots)} {label} ({retained_mib:.1f} MiB)"
+    )
 
 
 class KVPrefixCache:
@@ -460,7 +478,9 @@ class KVPrefixCache:
             return
 
         stored_cache = deepcopy(cache)
-        stored_snapshots = _latest_snapshot(ssm_snapshots) if is_v4 else ssm_snapshots
+        stored_snapshots = (
+            _latest_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
+        )
         if is_v4:
             self._evict_v4_entries_for_add()
         self._evict_if_needed()
@@ -492,11 +512,7 @@ class KVPrefixCache:
             f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries"
         )
         if is_v4 and stored_snapshots:
-            logger.info(
-                "DeepSeek V4 prefix cache retained "
-                f"{len(stored_snapshots)} snapshot "
-                f"({stored_snapshots[0].nbytes / (1 << 20):.1f} MiB)"
-            )
+            _log_v4_snapshot_retention(stored_snapshots)
 
     def update_kv_cache(
         self,
@@ -524,7 +540,7 @@ class KVPrefixCache:
                 if snapshot.token_count <= restore_pos
             ]
             eligible.extend(snapshots or [])
-            stored_snapshots = _latest_snapshot(eligible)
+            stored_snapshots = _latest_snapshots(eligible)
         else:
             merged: list[CacheSnapshot] = []
             if old_snapshots:
@@ -545,11 +561,7 @@ class KVPrefixCache:
         self._last_used[index] = access_counter
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
         if is_v4 and stored_snapshots:
-            logger.info(
-                "DeepSeek V4 prefix cache retained "
-                f"{len(stored_snapshots)} snapshot "
-                f"({stored_snapshots[0].nbytes / (1 << 20):.1f} MiB)"
-            )
+            _log_v4_snapshot_retention(stored_snapshots)
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int

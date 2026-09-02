@@ -203,6 +203,39 @@ class TestKVPrefix:
         assert cache_length(restored) == 98
         assert mx.array_equal(remaining, query[98:])
 
+    def test_v4_uses_earlier_snapshot_when_final_is_past_match(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [cached_prompt[:90], mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [cached_prompt]
+        prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=80, pool_rows=20)],
+                    token_count=80,
+                ),
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=98, pool_rows=24)],
+                    token_count=98,
+                ),
+            ]
+        ]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [0]
+        prefix_cache.prefill_tps = [0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 80
+        assert mx.array_equal(remaining, query[80:])
+
     def test_v4_mutation_before_final_snapshot_falls_back_to_fresh_prefill(self):
         cached_prompt = mx.arange(100, dtype=mx.int32)
         query = mx.concatenate(
@@ -297,7 +330,7 @@ class TestKVPrefix:
             if snapshots is not None
         ] == [24, 36, 48, 60, 72]
 
-    def test_v4_update_retains_only_latest_snapshot(self):
+    def test_v4_update_retains_latest_three_snapshots(self):
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [mx.arange(12, dtype=mx.int32)]
         prefix_cache.caches = [[_make_v4_cache(offset=12, pool_rows=3)]]
@@ -333,7 +366,7 @@ class TestKVPrefix:
         )
 
         assert prefix_cache._snapshots[0] is not None
-        assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [8, 16, 20]
 
     def test_v4_persistence_can_be_disabled(self):
         prefix_cache = KVPrefixCache(None)
@@ -401,8 +434,8 @@ class TestKVPrefix:
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [12]
 
-    def test_v4_prefill_captures_only_pre_generation_snapshot(self):
-        prompt_tokens = mx.arange(8193, dtype=mx.int32)
+    def test_v4_prefill_captures_two_fallbacks_and_pre_generation_snapshot(self):
+        prompt_tokens = mx.arange(12289, dtype=mx.int32)
         cache = [_make_v4_cache(offset=0, pool_rows=0)]
         model = MagicMock()
         model.layers = []
@@ -412,6 +445,8 @@ class TestKVPrefix:
             prompt_progress_callback(0, total)
             prompt_cache[0] = _make_v4_cache(offset=4096, pool_rows=1024)
             prompt_progress_callback(4096, total)
+            prompt_cache[0] = _make_v4_cache(offset=8192, pool_rows=2048)
+            prompt_progress_callback(8192, total)
             prompt_cache[0] = _make_v4_cache(
                 offset=total - 1,
                 pool_rows=(total - 1) // 4,
@@ -445,9 +480,12 @@ class TestKVPrefix:
                 distributed_prompt_progress_callback=None,
             )
 
-        assert snapshot_mock.call_count == 1
-        assert len(snapshots) == 1
-        assert snapshots[0].token_count == len(prompt_tokens) - 1
+        assert snapshot_mock.call_count == 3
+        assert [snapshot.token_count for snapshot in snapshots] == [
+            4096,
+            8192,
+            len(prompt_tokens) - 1,
+        ]
         assert cache_length(cache) == len(prompt_tokens) - 1
 
 

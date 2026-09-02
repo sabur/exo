@@ -324,7 +324,22 @@ def prefill(
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
     has_v4 = has_deepseek_v4_cache(cache)
+    is_pipeline = _has_pipeline_communication_layer(model)
+    prefill_step_size = 4096
+    pipeline_width = group.size() if is_pipeline and group is not None else 1
+    v4_snapshot_step = prefill_step_size // min(4, pipeline_width)
+    last_v4_fallback = (
+        ((num_tokens - 2) // v4_snapshot_step) * v4_snapshot_step
+        if num_tokens > 1
+        else -1
+    )
+    v4_fallback_targets = {
+        last_v4_fallback - offset * v4_snapshot_step
+        for offset in range(2)
+        if last_v4_fallback - offset * v4_snapshot_step >= 0
+    }
     snapshots: list[CacheSnapshot] = []
+    v4_fallback_snapshots: list[CacheSnapshot] = []
     v4_pre_gen_snapshot: CacheSnapshot | None = None
     wsdpa_status_logged = False
 
@@ -364,6 +379,18 @@ def prefill(
                     )
                 wsdpa_status_logged = True
         if has_v4:
+            if (
+                processed in v4_fallback_targets
+                and processed < total - 1
+            ):
+                candidate = snapshot_ssm_states(cache)
+                if candidate.token_count > 0:
+                    v4_fallback_snapshots.append(candidate)
+                    logger.info(
+                        "[INSTRUMENT] DeepSeek V4 fallback snapshot: "
+                        f"tokens={candidate.token_count}, "
+                        f"memory={candidate.nbytes / (1 << 20):.1f}MiB"
+                    )
             if processed == total - 1 and v4_pre_gen_snapshot is None:
                 v4_pre_gen_snapshot = snapshot_ssm_states(cache)
                 logger.info(
@@ -386,10 +413,6 @@ def prefill(
 
     mx_barrier(group)
     logger.info("Starting prefill")
-
-    is_pipeline = _has_pipeline_communication_layer(model)
-
-    prefill_step_size = 4096
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
@@ -464,7 +487,11 @@ def prefill(
     )
 
     if has_v4:
-        return tokens_per_sec, num_tokens, [v4_pre_gen_snapshot]
+        return tokens_per_sec, num_tokens, [
+            snapshot
+            for snapshot in (*v4_fallback_snapshots, v4_pre_gen_snapshot)
+            if snapshot is not None
+        ]
 
     # Exclude the last snapshot
     return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
