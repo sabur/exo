@@ -59,8 +59,10 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 8
 )
 
-# Retain two tail-safe rollback points plus the exact pre-generation state.
-_V4_PREFIX_CACHE_MAX_SNAPSHOTS_PER_ENTRY = 3
+# Retain fixed logarithmic anchors plus the two tail-safe rollback points and
+# exact pre-generation state. The anchor count grows only logarithmically.
+_V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
+_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 3
 
 
 class CacheSnapshot:
@@ -276,7 +278,16 @@ def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
     return any(isinstance(c, DeepseekV4Cache) for c in cache)
 
 
-def _latest_snapshots(
+def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
+    targets: list[int] = []
+    target = _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS
+    while target < final_token_count:
+        targets.append(target)
+        target *= 2
+    return tuple(targets)
+
+
+def _bounded_v4_snapshots(
     snapshots: list[CacheSnapshot] | None,
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
@@ -288,7 +299,15 @@ def _latest_snapshots(
         snapshots_by_position.values(),
         key=lambda snapshot: snapshot.token_count,
     )
-    return ordered[-_V4_PREFIX_CACHE_MAX_SNAPSHOTS_PER_ENTRY:]
+    selected: dict[int, CacheSnapshot] = {}
+    final_token_count = ordered[-1].token_count
+    for target in v4_snapshot_landmark_targets(final_token_count):
+        snapshot = _find_nearest_snapshot(ordered, target)
+        if snapshot is not None:
+            selected[snapshot.token_count] = snapshot
+    for snapshot in ordered[-_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT:]:
+        selected[snapshot.token_count] = snapshot
+    return sorted(selected.values(), key=lambda snapshot: snapshot.token_count)
 
 
 def _log_v4_snapshot_retention(snapshots: list[CacheSnapshot]) -> None:
@@ -296,7 +315,8 @@ def _log_v4_snapshot_retention(snapshots: list[CacheSnapshot]) -> None:
     retained_mib = sum(snapshot.nbytes for snapshot in snapshots) / (1 << 20)
     logger.info(
         "DeepSeek V4 prefix cache retained "
-        f"{len(snapshots)} {label} ({retained_mib:.1f} MiB)"
+        f"{len(snapshots)} {label} ({retained_mib:.1f} MiB) "
+        f"at tokens={[snapshot.token_count for snapshot in snapshots]}"
     )
 
 
@@ -479,7 +499,7 @@ class KVPrefixCache:
 
         stored_cache = deepcopy(cache)
         stored_snapshots = (
-            _latest_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
+            _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
         )
         if is_v4:
             self._evict_v4_entries_for_add()
@@ -513,6 +533,7 @@ class KVPrefixCache:
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
+            self._log_total_v4_snapshot_retention()
 
     def update_kv_cache(
         self,
@@ -540,7 +561,7 @@ class KVPrefixCache:
                 if snapshot.token_count <= restore_pos
             ]
             eligible.extend(snapshots or [])
-            stored_snapshots = _latest_snapshots(eligible)
+            stored_snapshots = _bounded_v4_snapshots(eligible)
         else:
             merged: list[CacheSnapshot] = []
             if old_snapshots:
@@ -562,6 +583,7 @@ class KVPrefixCache:
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
+            self._log_total_v4_snapshot_retention()
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -639,7 +661,7 @@ class KVPrefixCache:
         has_ssm = has_non_kv_caches(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
         if has_ssm:
-            target = best_length
+            target = min(best_length, max_length - 1) if is_exact else best_length
         else:
             desired = (max_length - 1) if is_exact else best_length
             target = min(cached_length, desired)
@@ -761,6 +783,22 @@ class KVPrefixCache:
         logger.info(
             f"KV cache evicted LRU entry index {index} "
             f"({evicted_tokens} tokens): {reason}"
+        )
+
+    def _log_total_v4_snapshot_retention(self) -> None:
+        total_bytes = sum(
+            snapshot.nbytes
+            for cache, snapshots in zip(
+                self.caches, self._snapshots, strict=True
+            )
+            if has_deepseek_v4_cache(cache)
+            for snapshot in snapshots or []
+        )
+        v4_entry_count = sum(has_deepseek_v4_cache(cache) for cache in self.caches)
+        logger.info(
+            "DeepSeek V4 prefix cache total retained snapshots: "
+            f"{total_bytes / (1 << 20):.1f} MiB across "
+            f"{v4_entry_count} entries"
         )
 
     def get_memory_used_percentage(self) -> float:

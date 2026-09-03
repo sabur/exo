@@ -44,6 +44,7 @@ from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     DeepseekV4Cache,
     KVPrefixCache,
+    cache_length,
     copy_snapshot_entry,
     encode_prompt,
     has_deepseek_v4_cache,
@@ -51,6 +52,7 @@ from exo.worker.engines.mlx.cache import (
     is_non_trimmable_cache_entry,
     make_kv_cache,
     snapshot_ssm_states,
+    v4_snapshot_landmark_targets,
 )
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
@@ -171,6 +173,35 @@ def _has_pipeline_communication_layer(model: Model):
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             return True
     return False
+
+
+def _v4_snapshot_progress_targets(
+    initial_token_count: int,
+    num_tokens: int,
+    snapshot_step: int,
+) -> set[int]:
+    if num_tokens <= 1:
+        return set()
+
+    final_token_count = initial_token_count + num_tokens - 1
+    absolute_targets = list(v4_snapshot_landmark_targets(final_token_count))
+    last_chunk_boundary = ((num_tokens - 2) // snapshot_step) * snapshot_step
+    absolute_targets.extend(
+        initial_token_count + last_chunk_boundary - offset * snapshot_step
+        for offset in range(2)
+        if last_chunk_boundary - offset * snapshot_step >= 0
+    )
+
+    progress_targets: set[int] = set()
+    for target in absolute_targets:
+        if target <= initial_token_count:
+            continue
+        aligned_progress = (
+            (target - initial_token_count) // snapshot_step
+        ) * snapshot_step
+        if 0 < aligned_progress < num_tokens - 1:
+            progress_targets.add(aligned_progress)
+    return progress_targets
 
 
 def pipeline_parallel_prefill(
@@ -326,22 +357,32 @@ def prefill(
     has_v4 = has_deepseek_v4_cache(cache)
     is_pipeline = _has_pipeline_communication_layer(model)
     prefill_step_size = 4096
-    pipeline_width = group.size() if is_pipeline and group is not None else 1
-    v4_snapshot_step = prefill_step_size // min(4, pipeline_width)
-    last_v4_fallback = (
-        ((num_tokens - 2) // v4_snapshot_step) * v4_snapshot_step
-        if num_tokens > 1
-        else -1
+    use_pipeline_prefill = is_pipeline and num_tokens >= prefill_step_size
+    pipeline_width = (
+        group.size() if use_pipeline_prefill and group is not None else 1
     )
-    v4_fallback_targets = {
-        last_v4_fallback - offset * v4_snapshot_step
-        for offset in range(2)
-        if last_v4_fallback - offset * v4_snapshot_step >= 0
-    }
+    v4_snapshot_step = prefill_step_size // min(4, pipeline_width)
+    initial_v4_token_count = cache_length(cache) if has_v4 else 0
+    v4_snapshot_targets = _v4_snapshot_progress_targets(
+        initial_v4_token_count,
+        num_tokens,
+        v4_snapshot_step,
+    )
     snapshots: list[CacheSnapshot] = []
-    v4_fallback_snapshots: list[CacheSnapshot] = []
+    v4_landmark_snapshots: list[CacheSnapshot] = []
     v4_pre_gen_snapshot: CacheSnapshot | None = None
     wsdpa_status_logged = False
+    if has_v4:
+        absolute_snapshot_targets = [
+            initial_v4_token_count + target for target in sorted(v4_snapshot_targets)
+        ]
+        logger.info(
+            "[INSTRUMENT] DeepSeek V4 snapshot plan: "
+            f"start={initial_v4_token_count}, "
+            f"final={initial_v4_token_count + num_tokens - 1}, "
+            f"step={v4_snapshot_step}, "
+            f"targets={absolute_snapshot_targets}"
+        )
 
     # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
@@ -379,15 +420,12 @@ def prefill(
                     )
                 wsdpa_status_logged = True
         if has_v4:
-            if (
-                processed in v4_fallback_targets
-                and processed < total - 1
-            ):
+            if processed in v4_snapshot_targets and processed < total - 1:
                 candidate = snapshot_ssm_states(cache)
                 if candidate.token_count > 0:
-                    v4_fallback_snapshots.append(candidate)
+                    v4_landmark_snapshots.append(candidate)
                     logger.info(
-                        "[INSTRUMENT] DeepSeek V4 fallback snapshot: "
+                        "[INSTRUMENT] DeepSeek V4 landmark snapshot: "
                         f"tokens={candidate.token_count}, "
                         f"memory={candidate.nbytes / (1 << 20):.1f}MiB"
                     )
@@ -411,11 +449,10 @@ def prefill(
 
     set_pipeline_prefill(model, is_prefill=True)
 
-    mx_barrier(group)
-    logger.info("Starting prefill")
-
     try:
-        if is_pipeline and num_tokens >= prefill_step_size:
+        mx_barrier(group)
+        logger.info("Starting prefill")
+        if use_pipeline_prefill:
             set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
@@ -446,12 +483,18 @@ def prefill(
             ):
                 break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
+        if has_v4 and v4_landmark_snapshots:
+            # Persistence remains atomic: incomplete prefill snapshots are local
+            # until this function returns successfully.
+            logger.info(
+                "DeepSeek V4 prefill cancelled; discarding transient "
+                "snapshots at tokens="
+                f"{[snapshot.token_count for snapshot in v4_landmark_snapshots]}"
+            )
+        raise
+    finally:
         set_pipeline_queue_sends(model, queue_sends=False)
         set_pipeline_prefill(model, is_prefill=False)
-        raise
-
-    set_pipeline_queue_sends(model, queue_sends=False)
-    set_pipeline_prefill(model, is_prefill=False)
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
@@ -487,11 +530,15 @@ def prefill(
     )
 
     if has_v4:
-        return tokens_per_sec, num_tokens, [
-            snapshot
-            for snapshot in (*v4_fallback_snapshots, v4_pre_gen_snapshot)
-            if snapshot is not None
-        ]
+        return (
+            tokens_per_sec,
+            num_tokens,
+            [
+                snapshot
+                for snapshot in (*v4_landmark_snapshots, v4_pre_gen_snapshot)
+                if snapshot is not None
+            ],
+        )
 
     # Exclude the last snapshot
     return tokens_per_sec, num_tokens, snapshots[:-1] if snapshots else []
