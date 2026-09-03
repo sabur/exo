@@ -56,7 +56,7 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 
 
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
-    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 5
+    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 8
 )
 
 # Retain two tail-safe rollback points plus the exact pre-generation state.
