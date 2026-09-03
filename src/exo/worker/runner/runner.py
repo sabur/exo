@@ -58,7 +58,7 @@ from exo.worker.engines.base import Builder, Engine
 from exo.worker.runner.bootstrap import logger
 
 PREFILL_PICKUP_TIMEOUT_SECONDS = 3
-PREFILL_FINISH_TIMEOUT_SECONDS = 300
+PREFILL_FINISH_TIMEOUT_SECONDS = 900  # bumped from 300 for 256K+ cold-start prefill (2026-09-03)
 
 
 @dataclass
