@@ -241,6 +241,118 @@ class TestKVPrefix:
         assert cache_length(restored) == 80
         assert mx.array_equal(remaining, query[80:])
 
+    def test_v4_selects_exact_entry_with_highest_restorable_prefix(self):
+        query = mx.arange(100, dtype=mx.int32)
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [query, query]
+        prefix_cache.caches = [
+            [_make_v4_cache(offset=99, pool_rows=25)],
+            [_make_v4_cache(offset=99, pool_rows=25)],
+        ]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=80, pool_rows=20)],
+                    token_count=80,
+                )
+            ],
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=98, pool_rows=24)],
+                    token_count=98,
+                )
+            ],
+        ]
+        prefix_cache._media_regions = [[], []]
+        prefix_cache._last_used = [10, 1]
+        prefix_cache.prefill_tps = [0.0, 0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 1
+        assert is_exact
+        assert cache_length(restored) == 98
+        assert mx.array_equal(remaining, query[98:])
+
+    def test_v4_selects_shorter_raw_match_with_better_restore_point(self):
+        query = mx.arange(120, dtype=mx.int32)
+        longer_raw_prompt = mx.concatenate(
+            [query[:100], mx.arange(1000, 1020, dtype=mx.int32)]
+        )
+        better_restore_prompt = mx.concatenate(
+            [query[:95], mx.arange(2000, 2025, dtype=mx.int32)]
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [longer_raw_prompt, better_restore_prompt]
+        prefix_cache.caches = [
+            [_make_v4_cache(offset=119, pool_rows=30)],
+            [_make_v4_cache(offset=119, pool_rows=30)],
+        ]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=80, pool_rows=20)],
+                    token_count=80,
+                )
+            ],
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=92, pool_rows=23)],
+                    token_count=92,
+                )
+            ],
+        ]
+        prefix_cache._media_regions = [[], []]
+        prefix_cache._last_used = [10, 1]
+        prefix_cache.prefill_tps = [0.0, 0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 1
+        assert not is_exact
+        assert cache_length(restored) == 92
+        assert mx.array_equal(remaining, query[92:])
+
+    def test_v4_skips_unrestorable_longest_prefix(self):
+        query = mx.arange(120, dtype=mx.int32)
+        unrestorable_prompt = mx.concatenate(
+            [query[:110], mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        restorable_prompt = mx.concatenate(
+            [query[:90], mx.arange(2000, 2030, dtype=mx.int32)]
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [unrestorable_prompt, restorable_prompt]
+        prefix_cache.caches = [
+            [_make_v4_cache(offset=119, pool_rows=30)],
+            [_make_v4_cache(offset=119, pool_rows=30)],
+        ]
+        prefix_cache._snapshots = [
+            None,
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=80, pool_rows=20)],
+                    token_count=80,
+                )
+            ],
+        ]
+        prefix_cache._media_regions = [[], []]
+        prefix_cache._last_used = [10, 1]
+        prefix_cache.prefill_tps = [0.0, 0.0]
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 1
+        assert not is_exact
+        assert cache_length(restored) == 80
+        assert mx.array_equal(remaining, query[80:])
+
     def test_v4_logarithmic_snapshot_recovers_92k_of_120k_match(self):
         cached_prompt = mx.arange(120_000, dtype=mx.int32)
         query = mx.concatenate(

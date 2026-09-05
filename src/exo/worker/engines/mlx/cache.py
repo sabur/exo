@@ -628,63 +628,116 @@ class KVPrefixCache:
         query_regions = media_regions or []
 
         best_index: int | None = None
+        best_raw_length = 0
         best_length = 0
-        is_exact = False
+        best_restore_pos = 0
+        best_restore_snap: CacheSnapshot | None = None
+        best_cached_length = 0
+        best_is_exact = False
+        best_score: tuple[int, int, int] | None = None
+        candidate_details: list[str] = []
 
-        # Find best cache match
+        # Rank candidates by the state we can actually restore, not merely by
+        # the raw token prefix. V4 snapshots may make a shorter raw match more
+        # useful than a longer match whose nearest checkpoint is much earlier.
         for i, cached_prompt in enumerate(self.prompts):
-            length = get_prefix_length(prompt_tokens, cached_prompt)
-            if length > 0:
-                length = self._validate_media_match(
-                    length,
+            raw_length = get_prefix_length(prompt_tokens, cached_prompt)
+            validated_length = raw_length
+            if validated_length > 0:
+                validated_length = self._validate_media_match(
+                    validated_length,
                     self._media_regions[i],
                     query_regions,
                 )
-            if length >= max_length - 1:
-                best_index, best_length = i, length
-                is_exact = True
+            candidate_is_exact = validated_length >= max_length - 1
+            if validated_length <= 0 and not candidate_is_exact:
+                candidate_details.append(
+                    f"{i}:tokens={len(cached_prompt)},raw={raw_length},"
+                    "validated=0,restore=0,reason=no-prefix"
+                )
+                continue
+
+            candidate_cache = self.caches[i]
+            candidate_cached_length = cache_length(candidate_cache)
+            candidate_has_ssm = has_non_kv_caches(candidate_cache)
+            if candidate_has_ssm:
+                target = (
+                    min(validated_length, max_length - 1)
+                    if candidate_is_exact
+                    else validated_length
+                )
+            else:
+                desired = (
+                    (max_length - 1)
+                    if candidate_is_exact
+                    else validated_length
+                )
+                target = min(candidate_cached_length, desired)
+
+            restore_pos, restore_snap = self._get_snapshot(i, target)
+            snapshots = self._snapshots[i] or []
+            snapshot_positions = [snapshot.token_count for snapshot in snapshots]
+            snapshot_mib = sum(snapshot.nbytes for snapshot in snapshots) / (
+                1 << 20
+            )
+            stored_cache_mib = sum(
+                _cache_state_nbytes(state) for state in candidate_cache
+            ) / (1 << 20)
+            usable = restore_snap is not None or not candidate_has_ssm
+            candidate_details.append(
+                f"{i}:tokens={len(cached_prompt)},raw={raw_length},"
+                f"validated={validated_length},restore={restore_pos},"
+                f"cached={candidate_cached_length},exact={candidate_is_exact},"
+                f"last_used={self._last_used[i]},"
+                f"cache={stored_cache_mib:.1f}MiB,"
+                f"snapshots={snapshot_positions},"
+                f"snapshot_bytes={snapshot_mib:.1f}MiB,"
+                f"usable={usable}"
+            )
+            if not usable:
+                continue
+
+            score = (
+                restore_pos,
+                validated_length,
+                self._last_used[i],
+            )
+            if best_score is None or score > best_score:
+                best_index = i
+                best_raw_length = raw_length
+                best_length = validated_length
+                best_restore_pos = restore_pos
+                best_restore_snap = restore_snap
+                best_cached_length = candidate_cached_length
+                best_is_exact = candidate_is_exact
+                best_score = score
+
+            # No later entry can restore more than the complete query prefix.
+            if restore_pos >= max_length - 1:
                 break
-            if length > best_length:
-                best_index, best_length = i, length
+
+        if candidate_details:
+            logger.info("KV cache candidates: " + " | ".join(candidate_details))
 
         if best_index is None:
             if self.prompts:
                 logger.info(
-                    "KV cache miss: no common token prefix across "
+                    "KV cache miss: no restorable token prefix across "
                     f"{len(self.prompts)} entries"
                 )
             return make_kv_cache(model), prompt_tokens, None, False
 
-        # For exact match: trim to max_length-1 so remaining has the last token
-        # For partial match: trim to best_length, remaining has suffix to prefill
-        # This ensures stream_generate always has at least one token to start with
-        has_ssm = has_non_kv_caches(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
-        if has_ssm:
-            target = min(best_length, max_length - 1) if is_exact else best_length
-        else:
-            desired = (max_length - 1) if is_exact else best_length
-            target = min(cached_length, desired)
-        restore_pos, restore_snap = self._get_snapshot(best_index, target)
-
-        # No usable snapshot — need fresh cache
-        if restore_snap is None and has_ssm:
-            snapshot_positions = [
-                snapshot.token_count
-                for snapshot in self._snapshots[best_index] or []
-            ]
-            logger.info(
-                "KV cache match cannot be restored: "
-                f"entry={best_index}, matched={best_length}/{max_length}, "
-                f"cached={cached_length}, snapshots={snapshot_positions}; "
-                "using fresh cache"
-            )
-            return make_kv_cache(model), prompt_tokens, None, False
+        logger.info(
+            "KV cache selected: "
+            f"entry={best_index}, raw={best_raw_length}/{max_length}, "
+            f"validated={best_length}, restore={best_restore_pos}, "
+            f"cached={best_cached_length}, exact={best_is_exact}"
+        )
 
         prompt_cache = deepcopy(self.caches[best_index])
-        tokens_to_trim = cached_length - restore_pos
+        tokens_to_trim = best_cached_length - best_restore_pos
         if tokens_to_trim > 0:
-            trim_cache(prompt_cache, tokens_to_trim, restore_snap)
+            trim_cache(prompt_cache, tokens_to_trim, best_restore_snap)
             # Reset cache offset to match trimmed length
             for c in prompt_cache:
                 if isinstance(c, (ArraysCache, RotatingKVCache)):
@@ -692,13 +745,13 @@ class KVPrefixCache:
                 if isinstance(c, DeepseekV4Cache):
                     continue
                 if hasattr(c, "offset"):
-                    c.offset = restore_pos
+                    c.offset = best_restore_pos
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter
-        remaining = prompt_tokens[restore_pos:]
+        remaining = prompt_tokens[best_restore_pos:]
 
-        return prompt_cache, remaining, best_index, is_exact
+        return prompt_cache, remaining, best_index, best_is_exact
 
     @staticmethod
     def _validate_media_match(
