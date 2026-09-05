@@ -667,19 +667,13 @@ class KVPrefixCache:
                     else validated_length
                 )
             else:
-                desired = (
-                    (max_length - 1)
-                    if candidate_is_exact
-                    else validated_length
-                )
+                desired = (max_length - 1) if candidate_is_exact else validated_length
                 target = min(candidate_cached_length, desired)
 
             restore_pos, restore_snap = self._get_snapshot(i, target)
             snapshots = self._snapshots[i] or []
             snapshot_positions = [snapshot.token_count for snapshot in snapshots]
-            snapshot_mib = sum(snapshot.nbytes for snapshot in snapshots) / (
-                1 << 20
-            )
+            snapshot_mib = sum(snapshot.nbytes for snapshot in snapshots) / (1 << 20)
             stored_cache_mib = sum(
                 _cache_state_nbytes(state) for state in candidate_cache
             ) / (1 << 20)
