@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 # Smaller machines need more aggressive eviction.
 def _default_memory_threshold() -> float:
     total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
+    if total_gb >= 256:
+        return 0.9
     if total_gb >= 128:
         return 0.85
     if total_gb >= 64:
@@ -62,7 +64,7 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
 # Retain fixed logarithmic anchors plus the two tail-safe rollback points and
 # exact pre-generation state. The anchor count grows only logarithmically.
 _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
-_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 2
+_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 3
 
 
 class CacheSnapshot:
