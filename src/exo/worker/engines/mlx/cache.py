@@ -102,13 +102,13 @@ def _cache_state_nbytes(state: object | None) -> int:
 
 def _detached_copy(a: mx.array) -> mx.array:
     """Create an independent copy of an mlx array without numpy round-trip.
-
+    
     Uses astype(dtype) which forces a copy while preserving the dtype.
     This keeps data on GPU and avoids expensive CPU transfer.
-
+    
     Args:
         a: Input mlx array
-
+    
     Returns:
         Independent copy of the array (same dtype, different memory)
     """
@@ -295,7 +295,9 @@ def _bounded_v4_snapshots(
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
-    snapshots_by_position = {snapshot.token_count: snapshot for snapshot in snapshots}
+    snapshots_by_position = {
+        snapshot.token_count: snapshot for snapshot in snapshots
+    }
     ordered = sorted(
         snapshots_by_position.values(),
         key=lambda snapshot: snapshot.token_count,
@@ -328,21 +330,17 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
-        self._instance_id: str = uuid.uuid4().hex  # immutable cache-instance namespace
-        self._entry_generations: list[
-            int
-        ] = []  # monotonic immutable generation ID per entry
-        self._next_generation: int = 1
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
+        self._instance_id: str = uuid.uuid4().hex  # immutable cache-instance namespace
+        self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
+        self._next_generation: int = 1
         self._group = group
-
+        
         # Structured cache separation: semantic boundaries
         # Each segment is cached independently with a hash for change detection
         # Segments: [system, context, conversation...]
-        self.segmented_caches: dict[
-            str, tuple[mx.array, KVCacheType, str]
-        ] = {}  # segment_id -> (tokens, cache, content_hash)
+        self.segmented_caches: dict[str, tuple[mx.array, KVCacheType, str]] = {}  # segment_id -> (tokens, cache, content_hash)
 
     def clear(self):
         """Clear all cached prompts and caches."""
@@ -366,27 +364,23 @@ class KVPrefixCache:
     ):
         """Set a segmented cache with content hash for change detection."""
         self.segmented_caches[segment_id] = (tokens, deepcopy(cache), content_hash)
-        logger.info(
-            f"Segment cache '{segment_id}' set: {len(tokens)} tokens, hash={content_hash[:8]}"
-        )
+        logger.info(f"Segment cache '{segment_id}' set: {len(tokens)} tokens, hash={content_hash[:8]}")
 
     def get_segmented_cache(
         self,
         model: Model,
         prompt_tokens: mx.array,
-        segment_boundaries: list[
-            tuple[str, int, int, str]
-        ],  # (segment_id, start, end, content_hash)
+        segment_boundaries: list[tuple[str, int, int, str]],  # (segment_id, start, end, content_hash)
         media_regions: list["MediaRegion"] | None = None,
     ) -> tuple[KVCacheType, mx.array, float]:
         """Get KV cache using semantic boundaries with change detection.
-
+        
         Args:
             model: The model
             prompt_tokens: Full prompt tokens
             segment_boundaries: List of (segment_id, start_token, end_token, content_hash)
             media_regions: Optional media regions for validation
-
+            
         Returns:
             Tuple of (cache, remaining_tokens, hit_rate) where:
             - cache: KV cache with matching segments already prefilled
@@ -396,194 +390,106 @@ class KVPrefixCache:
         total_len = len(prompt_tokens)
         cache = make_kv_cache(model)
         cached_len = 0
-
+        
         # Process each segment independently
         for segment_id, start, end, content_hash in segment_boundaries:
             segment_len = end - start
             if segment_len <= 0:
                 continue
-
+            
             # Check if we have a cached version with matching hash
             if segment_id in self.segmented_caches:
-                cached_tokens, cached_cache, cached_hash = self.segmented_caches[
-                    segment_id
-                ]
-
+                cached_tokens, cached_cache, cached_hash = self.segmented_caches[segment_id]
+                
                 if cached_hash == content_hash and len(cached_tokens) == segment_len:
                     # Hash match - reuse this segment's cache
-                    logger.info(
-                        f"Segment '{segment_id}' cache hit: {segment_len} tokens"
-                    )
-
+                    logger.info(f"Segment '{segment_id}' cache hit: {segment_len} tokens")
+                    
                     # Merge this segment's KV into the working cache
                     for i, (src, dst) in enumerate(zip(cached_cache, cache)):
                         # Handle DeepseekV4Cache specially
-                        if isinstance(src, DeepseekV4Cache) and isinstance(
-                            dst, DeepseekV4Cache
-                        ):
+                        if isinstance(src, DeepseekV4Cache) and isinstance(dst, DeepseekV4Cache):
                             # Merge local RotatingKVCache
                             src_local = src.local
                             dst_local = dst.local
-
-                            if (
-                                src_local.keys is not None
-                                and src_local.keys.shape[2] == segment_len
-                            ):
+                            
+                            if src_local.keys is not None and src_local.keys.shape[2] == segment_len:
                                 if dst_local.keys is None:
                                     dst_local.keys = _detached_copy(src_local.keys)
                                     dst_local.values = _detached_copy(src_local.values)
                                 else:
-                                    dst_local.keys = mx.concatenate(
-                                        [
-                                            dst_local.keys,
-                                            _detached_copy(src_local.keys),
-                                        ],
-                                        axis=2,
-                                    )
-                                    dst_local.values = mx.concatenate(
-                                        [
-                                            dst_local.values,
-                                            _detached_copy(src_local.values),
-                                        ],
-                                        axis=2,
-                                    )
-
+                                    dst_local.keys = mx.concatenate([dst_local.keys, _detached_copy(src_local.keys)], axis=2)
+                                    dst_local.values = mx.concatenate([dst_local.values, _detached_copy(src_local.values)], axis=2)
+                                
                                 dst_local.offset = cached_len + segment_len
                                 dst_local._idx = cached_len + segment_len
-
+                            
                             # Merge compressor branches
                             for branch_key, src_branch in src._branches.items():
                                 if branch_key not in dst._branches:
                                     continue
                                 dst_branch = dst._branches[branch_key]
-
+                                
                                 # Merge buffer_kv
-                                if (
-                                    src_branch.buffer_kv is not None
-                                    and src_branch.buffer_kv.shape[2] == segment_len
-                                ):
+                                if src_branch.buffer_kv is not None and src_branch.buffer_kv.shape[2] == segment_len:
                                     if dst_branch.buffer_kv is None:
-                                        dst_branch.buffer_kv = _detached_copy(
-                                            src_branch.buffer_kv
-                                        )
-                                        dst_branch.buffer_gate = _detached_copy(
-                                            src_branch.buffer_gate
-                                        )
+                                        dst_branch.buffer_kv = _detached_copy(src_branch.buffer_kv)
+                                        dst_branch.buffer_gate = _detached_copy(src_branch.buffer_gate)
                                     else:
-                                        dst_branch.buffer_kv = mx.concatenate(
-                                            [
-                                                dst_branch.buffer_kv,
-                                                _detached_copy(src_branch.buffer_kv),
-                                            ],
-                                            axis=2,
-                                        )
-                                        dst_branch.buffer_gate = mx.concatenate(
-                                            [
-                                                dst_branch.buffer_gate,
-                                                _detached_copy(src_branch.buffer_gate),
-                                            ],
-                                            axis=2,
-                                        )
-
+                                        dst_branch.buffer_kv = mx.concatenate([dst_branch.buffer_kv, _detached_copy(src_branch.buffer_kv)], axis=2)
+                                        dst_branch.buffer_gate = mx.concatenate([dst_branch.buffer_gate, _detached_copy(src_branch.buffer_gate)], axis=2)
+                                
                                 # Merge prev_kv
-                                if (
-                                    src_branch.prev_kv is not None
-                                    and src_branch.prev_kv.shape[2] == segment_len
-                                ):
+                                if src_branch.prev_kv is not None and src_branch.prev_kv.shape[2] == segment_len:
                                     if dst_branch.prev_kv is None:
-                                        dst_branch.prev_kv = _detached_copy(
-                                            src_branch.prev_kv
-                                        )
-                                        dst_branch.prev_gate = _detached_copy(
-                                            src_branch.prev_gate
-                                        )
+                                        dst_branch.prev_kv = _detached_copy(src_branch.prev_kv)
+                                        dst_branch.prev_gate = _detached_copy(src_branch.prev_gate)
                                     else:
-                                        dst_branch.prev_kv = mx.concatenate(
-                                            [
-                                                dst_branch.prev_kv,
-                                                _detached_copy(src_branch.prev_kv),
-                                            ],
-                                            axis=2,
-                                        )
-                                        dst_branch.prev_gate = mx.concatenate(
-                                            [
-                                                dst_branch.prev_gate,
-                                                _detached_copy(src_branch.prev_gate),
-                                            ],
-                                            axis=2,
-                                        )
-
+                                        dst_branch.prev_kv = mx.concatenate([dst_branch.prev_kv, _detached_copy(src_branch.prev_kv)], axis=2)
+                                        dst_branch.prev_gate = mx.concatenate([dst_branch.prev_gate, _detached_copy(src_branch.prev_gate)], axis=2)
+                                
                                 # Merge pool
                                 if src_branch.pool is not None:
                                     if dst_branch.pool is None:
-                                        dst_branch.pool = _detached_copy(
-                                            src_branch.pool
-                                        )
+                                        dst_branch.pool = _detached_copy(src_branch.pool)
                                     else:
-                                        dst_branch.pool = mx.concatenate(
-                                            [
-                                                dst_branch.pool,
-                                                _detached_copy(src_branch.pool),
-                                            ],
-                                            axis=2,
-                                        )
-
+                                        dst_branch.pool = mx.concatenate([dst_branch.pool, _detached_copy(src_branch.pool)], axis=2)
+                                
                                 # Copy lengths
-                                dst_branch.buffer_lengths = deepcopy(
-                                    src_branch.buffer_lengths
-                                )
-                                dst_branch.pool_lengths = deepcopy(
-                                    src_branch.pool_lengths
-                                )
-                                dst_branch.buffer_count = deepcopy(
-                                    src_branch.buffer_count
-                                )
-
-                        elif hasattr(dst, "keys") and hasattr(src, "keys"):
+                                dst_branch.buffer_lengths = deepcopy(src_branch.buffer_lengths)
+                                dst_branch.pool_lengths = deepcopy(src_branch.pool_lengths)
+                                dst_branch.buffer_count = deepcopy(src_branch.buffer_count)
+                        
+                        elif hasattr(dst, 'keys') and hasattr(src, 'keys'):
                             # Standard RotatingKVCache / ArraysCache handling
                             src_keys = src.keys
                             src_vals = src.values
-
-                            if (
-                                src_keys is not None
-                                and src_keys.shape[2] == segment_len
-                            ):
+                            
+                            if src_keys is not None and src_keys.shape[2] == segment_len:
                                 if dst.keys is None:
                                     dst.keys = _detached_copy(src_keys)
                                     dst.values = _detached_copy(src_vals)
                                 else:
                                     # Append to existing cache
-                                    dst.keys = mx.concatenate(
-                                        [dst.keys, _detached_copy(src_keys)], axis=2
-                                    )
-                                    dst.values = mx.concatenate(
-                                        [dst.values, _detached_copy(src_vals)], axis=2
-                                    )
-
+                                    dst.keys = mx.concatenate([dst.keys, _detached_copy(src_keys)], axis=2)
+                                    dst.values = mx.concatenate([dst.values, _detached_copy(src_vals)], axis=2)
+                                
                                 dst.offset = cached_len + segment_len
-                                if hasattr(src, "_idx"):
+                                if hasattr(src, '_idx'):
                                     dst._idx = cached_len + segment_len
-
+                    
                     cached_len += segment_len
                     continue
-
+            
             # No cache hit - this segment needs prefilling
-            logger.info(
-                f"Segment '{segment_id}' cache miss: {segment_len} tokens (hash changed or new)"
-            )
-
+            logger.info(f"Segment '{segment_id}' cache miss: {segment_len} tokens (hash changed or new)")
+        
         # Remaining tokens need prefilling
-        remaining = (
-            prompt_tokens[cached_len:]
-            if cached_len < total_len
-            else mx.array([], dtype=prompt_tokens.dtype)
-        )
+        remaining = prompt_tokens[cached_len:] if cached_len < total_len else mx.array([], dtype=prompt_tokens.dtype)
         hit_rate = (cached_len / total_len * 100) if total_len > 0 else 0
-
-        logger.info(
-            f"Segmented cache: {cached_len}/{total_len} tokens cached ({hit_rate:.1f}%)"
-        )
-
+        
+        logger.info(f"Segmented cache: {cached_len}/{total_len} tokens cached ({hit_rate:.1f}%)")
+        
         return cache, remaining, hit_rate
 
     def add_kv_cache(
@@ -610,9 +516,9 @@ class KVPrefixCache:
 
         access_counter = self._access_counter + 1
         start_length = len(self.prompts)
+        generation = self._next_generation
+        self._next_generation += 1
         try:
-            generation = self._next_generation
-            self._next_generation += 1
             self.prompts.append(prompt_tokens)
             self.caches.append(stored_cache)
             self._snapshots.append(stored_snapshots)
@@ -688,10 +594,7 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter = access_counter
         self._last_used[index] = access_counter
-        logger.info(
-            f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
-            f"entry_id={self._instance_id}:{self._entry_generations[index]}"
-        )
+        logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, entry_id={self._instance_id}:{self._entry_generations[index]}")
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
             self._log_total_v4_snapshot_retention()
@@ -794,10 +697,10 @@ class KVPrefixCache:
                 f"validated={validated_length},restore={restore_pos},"
                 f"cached={candidate_cached_length},exact={candidate_is_exact},"
                 f"last_used={self._last_used[i]},"
-                f"entry_id={self._instance_id}:{self._entry_generations[i]},"
                 f"cache={stored_cache_mib:.1f}MiB,"
                 f"snapshots={snapshot_positions},"
                 f"snapshot_bytes={snapshot_mib:.1f}MiB,"
+                f"entry_id={self._instance_id}:{self._entry_generations[i]},"
                 f"usable={usable}"
             )
             if not usable:
@@ -949,7 +852,9 @@ class KVPrefixCache:
     def _log_total_v4_snapshot_retention(self) -> None:
         total_bytes = sum(
             snapshot.nbytes
-            for cache, snapshots in zip(self.caches, self._snapshots, strict=True)
+            for cache, snapshots in zip(
+                self.caches, self._snapshots, strict=True
+            )
             if has_deepseek_v4_cache(cache)
             for snapshot in snapshots or []
         )

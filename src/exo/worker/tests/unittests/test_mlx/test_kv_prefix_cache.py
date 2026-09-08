@@ -192,7 +192,9 @@ class TestKVPrefix:
 
     def test_final_v4_snapshot_supports_append_only_hit(self):
         cached_prompt = mx.arange(100, dtype=mx.int32)
-        query = mx.concatenate([cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)])
+        query = mx.concatenate(
+            [cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)]
+        )
         snapshot = CacheSnapshot(
             states=[_make_v4_cache(offset=98, pool_rows=24)],
             token_count=98,
@@ -476,9 +478,13 @@ class TestKVPrefix:
         second_cache = [_make_v4_cache(offset=20, pool_rows=5)]
         second_snapshot = CacheSnapshot(states=second_cache, token_count=20)
 
-        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1):
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
+        ):
             prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
-            prefix_cache.add_kv_cache(second_prompt, second_cache, [second_snapshot])
+            prefix_cache.add_kv_cache(
+                second_prompt, second_cache, [second_snapshot]
+            )
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
@@ -489,7 +495,9 @@ class TestKVPrefix:
         """A cap of 3 retains three entries and evicts the LRU."""
         prefix_cache = KVPrefixCache(None)
 
-        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
+        ):
             for token_count in range(12, 60, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [
@@ -527,7 +535,7 @@ class TestKVPrefix:
     def test_v4_update_promotes_tail_snapshot_to_logarithmic_landmark(self):
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [mx.arange(79_000, dtype=mx.int32)]
-        prefix_cache._entry_generations = [1]
+        prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [[_make_v4_cache(offset=78_999, pool_rows=20)]]
         prefix_cache._snapshots = [
             [
@@ -585,7 +593,9 @@ class TestKVPrefix:
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
 
-        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0):
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0
+        ):
             prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
         assert prefix_cache.prompts == []
@@ -675,9 +685,7 @@ class TestKVPrefix:
         model = MagicMock()
         model.layers = []
 
-        def fake_stream_generate(
-            *, prompt, prompt_cache, prompt_progress_callback, **_
-        ):
+        def fake_stream_generate(*, prompt, prompt_cache, prompt_progress_callback, **_):
             total = len(prompt)
             prompt_progress_callback(0, total)
             for processed in (
@@ -896,27 +904,23 @@ class TestKVPrefix:
         snapshot = CacheSnapshot(states=cache, token_count=12)
         prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
-        composite_before = (
-            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
-        )
+        composite_before = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
 
         # Update the entry
         updated_prompt = mx.arange(24, dtype=mx.int32)
         updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-        prefix_cache.update_kv_cache(
-            0, updated_prompt, updated_cache, [], restore_pos=12
-        )
+        prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
 
-        composite_after = (
-            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
-        )
+        composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
 
     def test_v4_generation_index_shift_preserves_ids(self):
         """Generation IDs survive eviction-induced index shifts."""
         prefix_cache = KVPrefixCache(None)
 
-        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
+        ):
             for token_count in range(12, 72, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
