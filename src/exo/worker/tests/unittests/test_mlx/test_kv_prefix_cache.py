@@ -783,63 +783,62 @@ class TestKVPrefix:
             call(model, queue_sends=True),
             call(model, queue_sends=False),
         ]
-
     def test_v4_generation_id_monotonic_on_add(self):
-            """Generation IDs are monotonic and increase with each add."""
-            prefix_cache = KVPrefixCache(None)
+        """Generation IDs are monotonic and increase with each add."""
+        prefix_cache = KVPrefixCache(None)
 
-            with patch(
-                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
-            ):
-                ids = []
-                for token_count in range(12, 72, 12):
-                    prompt = mx.arange(token_count, dtype=mx.int32)
-                    cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
-                    snapshot = CacheSnapshot(states=cache, token_count=token_count)
-                    prefix_cache.add_kv_cache(prompt, cache, [snapshot])
-                    ids.append(prefix_cache._entry_generations[-1])
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
+        ):
+            ids = []
+            for token_count in range(12, 72, 12):
+                prompt = mx.arange(token_count, dtype=mx.int32)
+                cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
+                snapshot = CacheSnapshot(states=cache, token_count=token_count)
+                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+                ids.append(prefix_cache._entry_generations[-1])
 
-            # IDs should be strictly increasing
-            assert ids == [1, 2, 3, 4, 5]
-            assert len(set(ids)) == 5  # all unique
+        # IDs should be strictly increasing
+        assert ids == [1, 2, 3, 4, 5]
+        assert len(set(ids)) == 5  # all unique
 
     def test_v4_generation_id_preserved_on_update(self):
-            """Generation ID is preserved when an entry is updated in place."""
-            prefix_cache = KVPrefixCache(None)
+        """Generation ID is preserved when an entry is updated in place."""
+        prefix_cache = KVPrefixCache(None)
 
-            prompt = mx.arange(12, dtype=mx.int32)
-            cache = [_make_v4_cache(offset=12, pool_rows=3)]
-            snapshot = CacheSnapshot(states=cache, token_count=12)
-            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
-            original_gen = prefix_cache._entry_generations[0]
+        original_gen = prefix_cache._entry_generations[0]
 
-            # Update the entry
-            updated_prompt = mx.arange(24, dtype=mx.int32)
-            updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-            prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
+        # Update the entry
+        updated_prompt = mx.arange(24, dtype=mx.int32)
+        updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+        prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
 
-            # Generation should be the same after update
-            assert prefix_cache._entry_generations[0] == original_gen
+        # Generation should be the same after update
+        assert prefix_cache._entry_generations[0] == original_gen
 
     def test_v4_generation_id_survives_index_shift(self):
-            """Generation IDs move with entries when eviction shifts indices."""
-            prefix_cache = KVPrefixCache(None)
+        """Generation IDs move with entries when eviction shifts indices."""
+        prefix_cache = KVPrefixCache(None)
 
-            with patch(
-                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
-            ):
-                for token_count in range(12, 72, 12):
-                    prompt = mx.arange(token_count, dtype=mx.int32)
-                    cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
-                    snapshot = CacheSnapshot(states=cache, token_count=token_count)
-                    prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
+        ):
+            for token_count in range(12, 72, 12):
+                prompt = mx.arange(token_count, dtype=mx.int32)
+                cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
+                snapshot = CacheSnapshot(states=cache, token_count=token_count)
+                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
-            # After 5 adds with cap 3, oldest 2 should be evicted
-            # Remaining: token_counts 36, 48, 60 with generations 3, 4, 5
-            assert len(prefix_cache._entry_generations) == 3
-            assert prefix_cache._entry_generations == [3, 4, 5]
-            assert [len(p) for p in prefix_cache.prompts] == [36, 48, 60]
+        # After 5 adds with cap 3, oldest 2 should be evicted
+        # Remaining: token_counts 36, 48, 60 with generations 3, 4, 5
+        assert len(prefix_cache._entry_generations) == 3
+        assert prefix_cache._entry_generations == [3, 4, 5]
+        assert [len(p) for p in prefix_cache.prompts] == [36, 48, 60]
 
     def test_v4_generation_id_rollback_on_failed_add(self):
         """Generation list stays aligned with other collections on failed add.
@@ -869,6 +868,7 @@ class TestKVPrefix:
         assert len(prefix_cache.prompts) == 1
         assert len(prefix_cache._entry_generations) == 1
         assert prefix_cache._entry_generations == [1]
+
 
 def _load_gpt_oss() -> tuple[Model, object]:
     from mlx_lm.utils import load_model
