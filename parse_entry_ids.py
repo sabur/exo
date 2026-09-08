@@ -19,7 +19,7 @@ host = os.uname().nodename
 # Patterns
 ENTRY_ID_RE = re.compile(r'entry_id=([a-f0-9]+):(\d+)')
 TS_RE = re.compile(r'\[\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s*\|')
-TOKENS_RE = re.compile(r'(\d+)\s+tokens')
+TOKENS_RE = re.compile(r'(\d+)\s+tokens|tokens=(\d+)')
 VISION_RE = re.compile(r'vision|image|pipeline', re.IGNORECASE)
 SNAPSHOT_RE = re.compile(r'snapshots=\[([^\]]+)\]')
 SNAPSHOT_BYTES_RE = re.compile(r'snapshot_bytes=([\d.]+)(MiB|GiB)')
@@ -84,7 +84,7 @@ for i, line in enumerate(lines):
     instance_count[inst] += 1
     
     tok_m = TOKENS_RE.search(line)
-    tokens = int(tok_m.group(1)) if tok_m else 0
+    tokens = int(tok_m.group(1) or tok_m.group(2)) if tok_m else 0
     
     # Parse snapshot data
     snap_m = SNAPSHOT_RE.search(line)
@@ -279,3 +279,100 @@ outpath = Path(logfile).parent / "parse_entry_ids_output.json"
 with open(outpath, 'w') as f:
     json.dump(output, f, indent=2, default=str)
 print(f"\nJSON: {outpath} ({os.path.getsize(outpath)} bytes)")
+
+# Pass 4: per-request cache efficiency
+# Re-scan for candidate events with raw/validated/restore fields
+request_metrics = []
+with open(logfile) as f:
+    lines = f.readlines()
+
+for i, line in enumerate(lines):
+    if 'candidates' not in line.lower() and 'prefill' not in line.lower():
+        continue
+    
+    ts_m = TS_RE.match(line)
+    ts = ts_m.group(1) if ts_m else "unknown"
+    
+    m = ENTRY_ID_RE.search(line)
+    inst = m.group(1) if m else None
+    gen = int(m.group(2)) if m else None
+    model = instance_model.get(inst, 'unknown') if inst else 'unknown'
+    if model != 'deepseek':
+        continue
+    
+    raw_m = RAW_PREFIX_RE.search(line)
+    val_m = VALIDATED_RE.search(line)
+    rest_m = RESTORE_RE.search(line)
+    cach_m = CACHED_RE.search(line)
+    tok_m = TOKENS_RE.search(line)
+    
+    raw_prefix = int(raw_m.group(1)) if raw_m else None
+    validated = int(val_m.group(1)) if val_m else None
+    restore = int(rest_m.group(1)) if rest_m else None
+    cached = int(cach_m.group(1)) if cach_m else None
+    tokens = int(tok_m.group(1) or tok_m.group(2)) if tok_m else None
+    
+    if 'candidates' in line.lower() and raw_prefix and tokens:
+        backfill = validated - restore if (validated is not None and restore is not None) else None
+        new_suffix = tokens - validated if (validated is not None and tokens) else None
+        total_computed = tokens - restore if (restore is not None and tokens) else None
+        raw_ratio = raw_prefix / tokens * 100 if tokens else None
+        val_ratio = validated / tokens * 100 if (validated is not None and tokens) else None
+        restore_eff = restore / validated * 100 if (validated and restore is not None) else None
+        
+        request_metrics.append({
+            'ts': ts,
+            'entry_id': f"{inst}:{gen}" if inst else None,
+            'request_tokens': tokens,
+            'raw_prefix': raw_prefix,
+            'raw_ratio': round(raw_ratio, 2) if raw_ratio else None,
+            'validated_prefix': validated,
+            'validated_ratio': round(val_ratio, 2) if val_ratio else None,
+            'restore_tokens': restore,
+            'restore_efficiency': round(restore_eff, 2) if restore_eff else None,
+            'checkpoint_backfill': backfill,
+            'new_suffix': new_suffix,
+            'total_computed': total_computed,
+            'cached_tokens': cached
+        })
+
+print(f"\n{'='*72}")
+print(f"PER-REQUEST CACHE EFFICIENCY (last 20 DeepSeek requests)")
+print(f"{'='*72}")
+print(f"{'Time':>10} | {'Entry':>8} | {'ReqTok':>7} | {'Raw%':>6} | {'Val%':>6} | {'Rest%':>6} | {'Backfill':>8} | {'Suffix':>7}")
+print(f"{'-'*10} | {'-'*8} | {'-'*7} | {'-'*6} | {'-'*6} | {'-'*6} | {'-'*8} | {'-'*7}")
+for rm in request_metrics[-20:]:
+    raw_s = f"{rm['raw_ratio']:.1f}%" if rm['raw_ratio'] else " —  "
+    val_s = f"{rm['validated_ratio']:.1f}%" if rm['validated_ratio'] else " —  "
+    rest_s = f"{rm['restore_efficiency']:.1f}%" if rm['restore_efficiency'] else " —  "
+    bf = f"{rm['checkpoint_backfill']:>6}" if rm['checkpoint_backfill'] is not None else "   —  "
+    sfx = f"{rm['new_suffix']:>5}" if rm['new_suffix'] is not None else "   —"
+    print(f"{rm['ts'][11:19]:>10} | {rm['entry_id']:>8} | {rm['request_tokens']:>7} | {raw_s:>6} | {val_s:>6} | {rest_s:>6} | {bf:>8} | {sfx:>7}")
+
+# Aggregate summary
+if request_metrics:
+    print(f"\n  AGGREGATE ({len(request_metrics)} requests):")
+    raw_ratios = [r['raw_ratio'] for r in request_metrics if r['raw_ratio']]
+    val_ratios = [r['validated_ratio'] for r in request_metrics if r['validated_ratio']]
+    rest_effs = [r['restore_efficiency'] for r in request_metrics if r['restore_efficiency']]
+    backfills = [r['checkpoint_backfill'] for r in request_metrics if r['checkpoint_backfill'] is not None]
+    suffixes = [r['new_suffix'] for r in request_metrics if r['new_suffix'] is not None]
+    
+    if raw_ratios:
+        print(f"  Raw prefix match:   mean={sum(raw_ratios)/len(raw_ratios):.1f}%  min={min(raw_ratios):.1f}%  max={max(raw_ratios):.1f}%")
+    if val_ratios:
+        print(f"  Validated prefix:   mean={sum(val_ratios)/len(val_ratios):.1f}%  min={min(val_ratios):.1f}%  max={max(val_ratios):.1f}%")
+    if rest_effs:
+        print(f"  Restore efficiency: mean={sum(rest_effs)/len(rest_effs):.1f}%  min={min(rest_effs):.1f}%  max={max(rest_effs):.1f}%")
+    if backfills:
+        print(f"  Checkpoint backfill: mean={sum(backfills)/len(backfills):.0f}  min={min(backfills)}  max={max(backfills)}")
+    if suffixes:
+        print(f"  New suffix tokens:  mean={sum(suffixes)/len(suffixes):.0f}  min={min(suffixes)}  max={max(suffixes)}")
+
+# Add to JSON output
+output['per_request'] = request_metrics
+
+# Write updated JSON
+with open(outpath, 'w') as f:
+    json.dump(output, f, indent=2, default=str)
+print(f"\nJSON updated: {outpath} ({os.path.getsize(outpath)} bytes)")
