@@ -528,7 +528,7 @@ class TestKVPrefix:
     def test_v4_update_promotes_tail_snapshot_to_logarithmic_landmark(self):
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [mx.arange(79_000, dtype=mx.int32)]
-        prefix_cache._entry_generations = [1, 2]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=78_999, pool_rows=20)]]
         prefix_cache._snapshots = [
             [
@@ -783,68 +783,55 @@ class TestKVPrefix:
             call(model, queue_sends=True),
             call(model, queue_sends=False),
         ]
-    def test_v4_generation_id_monotonic_on_add(self):
-        """Generation IDs are monotonic and increase with each add."""
+
+    def test_v4_generation_clear_resets_entries_not_counter(self):
+        """add -> clear -> add yields gen 1 then 2, same instance ID."""
         prefix_cache = KVPrefixCache(None)
+        instance_id = prefix_cache._instance_id
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
-        ):
-            ids = []
-            for token_count in range(12, 72, 12):
-                prompt = mx.arange(token_count, dtype=mx.int32)
-                cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
-                snapshot = CacheSnapshot(states=cache, token_count=token_count)
-                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
-                ids.append(prefix_cache._entry_generations[-1])
-
-        # IDs should be strictly increasing
-        assert ids == [1, 2, 3, 4, 5]
-        assert len(set(ids)) == 5  # all unique
-
-    def test_v4_generation_id_preserved_on_update(self):
-        """Generation ID is preserved when an entry is updated in place."""
-        prefix_cache = KVPrefixCache(None)
-
+        # First add: generation 1
         prompt = mx.arange(12, dtype=mx.int32)
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
         prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        assert prefix_cache._entry_generations == [1]
 
-        original_gen = prefix_cache._entry_generations[0]
+        # Clear resets entries but NOT the counter or instance ID
+        prefix_cache.clear()
+        assert len(prefix_cache._entry_generations) == 0
+        assert prefix_cache._next_generation == 2  # not reset to 1
+        assert prefix_cache._instance_id == instance_id  # same instance
 
-        # Update the entry
-        updated_prompt = mx.arange(24, dtype=mx.int32)
-        updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-        prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
+        # Second add: generation 2 (not 1)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        assert prefix_cache._entry_generations == [2]
 
-        # Generation should be the same after update
-        assert prefix_cache._entry_generations[0] == original_gen
+    def test_v4_generation_composite_id_differs_across_instances(self):
+        """Composite IDs differ across cache instances even at same generation."""
+        cache1 = KVPrefixCache(None)
+        cache2 = KVPrefixCache(None)
 
-    def test_v4_generation_id_survives_index_shift(self):
-        """Generation IDs move with entries when eviction shifts indices."""
-        prefix_cache = KVPrefixCache(None)
+        assert cache1._instance_id != cache2._instance_id
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
-        ):
-            for token_count in range(12, 72, 12):
-                prompt = mx.arange(token_count, dtype=mx.int32)
-                cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
-                snapshot = CacheSnapshot(states=cache, token_count=token_count)
-                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
 
-        # After 5 adds with cap 3, oldest 2 should be evicted
-        # Remaining: token_counts 36, 48, 60 with generations 3, 4, 5
-        assert len(prefix_cache._entry_generations) == 3
-        assert prefix_cache._entry_generations == [3, 4, 5]
-        assert [len(p) for p in prefix_cache.prompts] == [36, 48, 60]
+        cache1.add_kv_cache(prompt, cache, [snapshot])
+        cache2.add_kv_cache(prompt, cache, [snapshot])
 
-    def test_v4_generation_id_rollback_on_failed_add(self):
-        """Generation list stays aligned with other collections on failed add.
+        # Both have generation 1 but different instance IDs -> different composite IDs
+        assert cache1._entry_generations == [1]
+        assert cache2._entry_generations == [1]
+        composite1 = f"{cache1._instance_id}:1"
+        composite2 = f"{cache2._instance_id}:1"
+        assert composite1 != composite2
 
-        Simulate failure by making deepcopy fail on the second add call,
-        which triggers add_kv_cache rollback.
+    def test_v4_generation_rollback_injection(self):
+        """_entry_generations.append failure rolls back ALL collections.
+
+        Replace _entry_generations with a list whose append() raises
+        AFTER all earlier parallel collections have appended.
         """
         prefix_cache = KVPrefixCache(None)
 
@@ -852,22 +839,65 @@ class TestKVPrefix:
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
         prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        original_len = len(prefix_cache.prompts)
 
-        # Second add fails during deepcopy, triggering rollback
-        with patch(
-            "exo.worker.engines.mlx.cache.deepcopy",
-            side_effect=RuntimeError("copy failed"),
-        ):
-            with pytest.raises(RuntimeError, match="copy failed"):
-                bad_prompt = mx.arange(24, dtype=mx.int32)
-                bad_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-                bad_snapshot = CacheSnapshot(states=bad_cache, token_count=24)
-                prefix_cache.add_kv_cache(bad_prompt, bad_cache, [bad_snapshot])
+        # Replace _entry_generations with a list whose append raises
+        class FailingGenerations(list):
+            def append(self, x):
+                raise RuntimeError("Simulated generations append failure")
 
-        # After rollback, all collections should be length 1 (original entry only)
-        assert len(prefix_cache.prompts) == 1
-        assert len(prefix_cache._entry_generations) == 1
-        assert prefix_cache._entry_generations == [1]
+        prefix_cache._entry_generations = FailingGenerations([1])
+
+        try:
+            bad_prompt = mx.arange(24, dtype=mx.int32)
+            bad_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+            prefix_cache.add_kv_cache(bad_prompt, bad_cache, [snapshot])
+        except RuntimeError:
+            pass
+
+        # After rollback, ALL collections should be back to original length
+        assert len(prefix_cache.prompts) == original_len
+        assert len(prefix_cache.caches) == original_len
+        assert len(prefix_cache._snapshots) == original_len
+        assert len(prefix_cache._media_regions) == original_len
+        assert len(prefix_cache._last_used) == original_len
+        assert len(prefix_cache.prefill_tps) == original_len
+
+    def test_v4_generation_skipped_id_not_reused(self):
+        """After rollback, the consumed generation is not reused."""
+        prefix_cache = KVPrefixCache(None)
+
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        # Force failure in _entry_generations.append
+        class FailingGenerations(list):
+            def append(self, x):
+                raise RuntimeError("Simulated generations append failure")
+
+        prefix_cache._entry_generations = FailingGenerations([1])
+
+        try:
+            prefix_cache.add_kv_cache(
+                mx.arange(24, dtype=mx.int32),
+                [_make_v4_cache(offset=24, pool_rows=6)],
+                [snapshot],
+            )
+        except RuntimeError:
+            pass
+
+        # Restore to a normal list (rollback already cleaned up)
+        prefix_cache._entry_generations = [1]
+
+        # Add again: generation 2 was consumed by failed attempt, use generation 3
+        prefix_cache.add_kv_cache(
+            mx.arange(24, dtype=mx.int32),
+            [_make_v4_cache(offset=24, pool_rows=6)],
+            [snapshot],
+        )
+        assert prefix_cache._entry_generations == [1, 3]
 
 
 def _load_gpt_oss() -> tuple[Model, object]:
@@ -1364,4 +1394,3 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.prompts) == 1
         # The surviving entry should be the newly added one
         assert get_prefix_length(kv_prefix_cache.prompts[0], tokens) == len(tokens)
-

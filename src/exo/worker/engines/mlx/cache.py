@@ -1,5 +1,6 @@
 import gc
 import os
+import uuid
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -329,6 +330,7 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self._instance_id: str = uuid.uuid4().hex  # immutable cache-instance namespace
         self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
         self._next_generation: int = 1
         self.prefill_tps: list[float] = []
@@ -348,7 +350,8 @@ class KVPrefixCache:
         self._media_regions.clear()
         self._last_used.clear()
         self._entry_generations.clear()
-        self._next_generation = 1
+        # Do NOT reset _next_generation — generation IDs are monotonic for the object lifetime
+        # Do NOT reset _instance_id — it is the immutable cache-instance namespace
         self.prefill_tps.clear()
         # Keep segmented caches - they persist across turns unless invalidated
 
@@ -540,7 +543,7 @@ class KVPrefixCache:
         logger.info(
             f"KV cache added (index {start_length}): "
             f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries, "
-            f"generation={generation}"
+            f"entry_id={self._instance_id}:{generation}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -593,7 +596,7 @@ class KVPrefixCache:
         self._last_used[index] = access_counter
         logger.info(
             f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
-            f"generation={self._entry_generations[index]}"
+            f"entry_id={self._instance_id}:{self._entry_generations[index]}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -697,7 +700,7 @@ class KVPrefixCache:
                 f"validated={validated_length},restore={restore_pos},"
                 f"cached={candidate_cached_length},exact={candidate_is_exact},"
                 f"last_used={self._last_used[i]},"
-                f"generation={self._entry_generations[i]},"
+                f"entry_id={self._instance_id}:{self._entry_generations[i]},"
                 f"cache={stored_cache_mib:.1f}MiB,"
                 f"snapshots={snapshot_positions},"
                 f"snapshot_bytes={snapshot_mib:.1f}MiB,"
@@ -846,7 +849,7 @@ class KVPrefixCache:
         self.prefill_tps.pop(index)
         logger.info(
             f"KV cache evicted LRU entry index {index} "
-            f"({evicted_tokens} tokens, generation={evicted_gen}): {reason}"
+            f"({evicted_tokens} tokens, entry_id={self._instance_id}:{evicted_gen}): {reason}"
         )
 
     def _log_total_v4_snapshot_retention(self) -> None:
