@@ -54,6 +54,13 @@ def _make_v4_cache(offset: int, pool_rows: int) -> DeepseekV4Cache:
     return cache
 
 
+class _FailingGenerations(list[int]):
+    """List subclass whose append() raises, used to test rollback."""
+
+    def append(self, value: int) -> None:
+        raise RuntimeError("simulated generations append failure")
+
+
 class TestGetPrefixLength:
     def test_identical_arrays(self):
         a = mx.array([1, 2, 3, 4, 5])
@@ -185,9 +192,7 @@ class TestKVPrefix:
 
     def test_final_v4_snapshot_supports_append_only_hit(self):
         cached_prompt = mx.arange(100, dtype=mx.int32)
-        query = mx.concatenate(
-            [cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)]
-        )
+        query = mx.concatenate([cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)])
         snapshot = CacheSnapshot(
             states=[_make_v4_cache(offset=98, pool_rows=24)],
             token_count=98,
@@ -471,13 +476,9 @@ class TestKVPrefix:
         second_cache = [_make_v4_cache(offset=20, pool_rows=5)]
         second_snapshot = CacheSnapshot(states=second_cache, token_count=20)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1):
             prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
-            prefix_cache.add_kv_cache(
-                second_prompt, second_cache, [second_snapshot]
-            )
+            prefix_cache.add_kv_cache(second_prompt, second_cache, [second_snapshot])
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
@@ -488,9 +489,7 @@ class TestKVPrefix:
         """A cap of 3 retains three entries and evicts the LRU."""
         prefix_cache = KVPrefixCache(None)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
             for token_count in range(12, 60, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [
@@ -586,9 +585,7 @@ class TestKVPrefix:
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0):
             prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
         assert prefix_cache.prompts == []
@@ -678,7 +675,9 @@ class TestKVPrefix:
         model = MagicMock()
         model.layers = []
 
-        def fake_stream_generate(*, prompt, prompt_cache, prompt_progress_callback, **_):
+        def fake_stream_generate(
+            *, prompt, prompt_cache, prompt_progress_callback, **_
+        ):
             total = len(prompt)
             prompt_progress_callback(0, total)
             for processed in (
@@ -830,8 +829,8 @@ class TestKVPrefix:
     def test_v4_generation_rollback_injection(self):
         """_entry_generations.append failure rolls back ALL collections.
 
-        Replace _entry_generations with a list whose append() raises
-        AFTER all earlier parallel collections have appended.
+        Replace _entry_generations with _FailingGenerations whose append()
+        raises AFTER all earlier parallel collections have appended.
         """
         prefix_cache = KVPrefixCache(None)
 
@@ -842,18 +841,12 @@ class TestKVPrefix:
         original_len = len(prefix_cache.prompts)
 
         # Replace _entry_generations with a list whose append raises
-        class FailingGenerations(list):
-            def append(self, x):
-                raise RuntimeError("Simulated generations append failure")
+        prefix_cache._entry_generations = _FailingGenerations([1])
 
-        prefix_cache._entry_generations = FailingGenerations([1])
-
-        try:
+        with pytest.raises(RuntimeError, match="simulated generations append failure"):
             bad_prompt = mx.arange(24, dtype=mx.int32)
             bad_cache = [_make_v4_cache(offset=24, pool_rows=6)]
             prefix_cache.add_kv_cache(bad_prompt, bad_cache, [snapshot])
-        except RuntimeError:
-            pass
 
         # After rollback, ALL collections should be back to original length
         assert len(prefix_cache.prompts) == original_len
@@ -862,6 +855,7 @@ class TestKVPrefix:
         assert len(prefix_cache._media_regions) == original_len
         assert len(prefix_cache._last_used) == original_len
         assert len(prefix_cache.prefill_tps) == original_len
+        assert prefix_cache._entry_generations == [1]
 
     def test_v4_generation_skipped_id_not_reused(self):
         """After rollback, the consumed generation is not reused."""
@@ -873,20 +867,14 @@ class TestKVPrefix:
         prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
         # Force failure in _entry_generations.append
-        class FailingGenerations(list):
-            def append(self, x):
-                raise RuntimeError("Simulated generations append failure")
+        prefix_cache._entry_generations = _FailingGenerations([1])
 
-        prefix_cache._entry_generations = FailingGenerations([1])
-
-        try:
+        with pytest.raises(RuntimeError, match="simulated generations append failure"):
             prefix_cache.add_kv_cache(
                 mx.arange(24, dtype=mx.int32),
                 [_make_v4_cache(offset=24, pool_rows=6)],
                 [snapshot],
             )
-        except RuntimeError:
-            pass
 
         # Restore to a normal list (rollback already cleaned up)
         prefix_cache._entry_generations = [1]
@@ -898,6 +886,48 @@ class TestKVPrefix:
             [snapshot],
         )
         assert prefix_cache._entry_generations == [1, 3]
+
+    def test_v4_generation_update_preserves_composite_id(self):
+        """update_kv_cache preserves the composite entry ID."""
+        prefix_cache = KVPrefixCache(None)
+
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        composite_before = (
+            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        )
+
+        # Update the entry
+        updated_prompt = mx.arange(24, dtype=mx.int32)
+        updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+        prefix_cache.update_kv_cache(
+            0, updated_prompt, updated_cache, [], restore_pos=12
+        )
+
+        composite_after = (
+            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        )
+        assert composite_after == composite_before
+
+    def test_v4_generation_index_shift_preserves_ids(self):
+        """Generation IDs survive eviction-induced index shifts."""
+        prefix_cache = KVPrefixCache(None)
+
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
+            for token_count in range(12, 72, 12):
+                prompt = mx.arange(token_count, dtype=mx.int32)
+                cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
+                snapshot = CacheSnapshot(states=cache, token_count=token_count)
+                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        # After 5 adds with cap 3, oldest 2 should be evicted
+        # Remaining: token_counts 36, 48, 60 with generations 3, 4, 5
+        assert len(prefix_cache._entry_generations) == 3
+        assert prefix_cache._entry_generations == [3, 4, 5]
+        assert [len(p) for p in prefix_cache.prompts] == [36, 48, 60]
 
 
 def _load_gpt_oss() -> tuple[Model, object]:
