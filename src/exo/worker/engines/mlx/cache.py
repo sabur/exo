@@ -329,6 +329,8 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
+        self._next_generation: int = 1
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
@@ -345,6 +347,8 @@ class KVPrefixCache:
         self._snapshots.clear()
         self._media_regions.clear()
         self._last_used.clear()
+        self._entry_generations.clear()
+        self._next_generation = 1
         self.prefill_tps.clear()
         # Keep segmented caches - they persist across turns unless invalidated
 
@@ -510,12 +514,15 @@ class KVPrefixCache:
         access_counter = self._access_counter + 1
         start_length = len(self.prompts)
         try:
+            generation = self._next_generation
+            self._next_generation += 1
             self.prompts.append(prompt_tokens)
             self.caches.append(stored_cache)
             self._snapshots.append(stored_snapshots)
             self._media_regions.append(media_regions or [])
             self.prefill_tps.append(prefill_tps)
             self._last_used.append(access_counter)
+            self._entry_generations.append(generation)
         except Exception:
             for collection in (
                 self.prompts,
@@ -524,6 +531,7 @@ class KVPrefixCache:
                 self._media_regions,
                 self.prefill_tps,
                 self._last_used,
+                self._entry_generations,
             ):
                 del collection[start_length:]
             raise
@@ -531,7 +539,8 @@ class KVPrefixCache:
         self._access_counter = access_counter
         logger.info(
             f"KV cache added (index {start_length}): "
-            f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries"
+            f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries, "
+            f"generation={generation}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -582,7 +591,10 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter = access_counter
         self._last_used[index] = access_counter
-        logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+        logger.info(
+            f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
+            f"generation={self._entry_generations[index]}"
+        )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
             self._log_total_v4_snapshot_retention()
@@ -685,6 +697,7 @@ class KVPrefixCache:
                 f"validated={validated_length},restore={restore_pos},"
                 f"cached={candidate_cached_length},exact={candidate_is_exact},"
                 f"last_used={self._last_used[i]},"
+                f"generation={self._entry_generations[i]},"
                 f"cache={stored_cache_mib:.1f}MiB,"
                 f"snapshots={snapshot_positions},"
                 f"snapshot_bytes={snapshot_mib:.1f}MiB,"
@@ -823,15 +836,17 @@ class KVPrefixCache:
 
     def _evict_entry(self, index: int, reason: str) -> None:
         evicted_tokens = len(self.prompts[index])
+        evicted_gen = self._entry_generations[index]
         self.prompts.pop(index)
         self.caches.pop(index)
         self._snapshots.pop(index)
         self._media_regions.pop(index)
         self._last_used.pop(index)
+        self._entry_generations.pop(index)
         self.prefill_tps.pop(index)
         logger.info(
             f"KV cache evicted LRU entry index {index} "
-            f"({evicted_tokens} tokens): {reason}"
+            f"({evicted_tokens} tokens, generation={evicted_gen}): {reason}"
         )
 
     def _log_total_v4_snapshot_retention(self) -> None:

@@ -165,6 +165,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=100, pool_rows=25)]]
         prefix_cache._snapshots = [[snapshot]]
         prefix_cache._media_regions = [[]]
@@ -193,6 +194,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
         prefix_cache._snapshots = [[snapshot]]
         prefix_cache._media_regions = [[]]
@@ -215,6 +217,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
         prefix_cache._snapshots = [
             [
@@ -245,6 +248,7 @@ class TestKVPrefix:
         query = mx.arange(100, dtype=mx.int32)
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [query, query]
+        prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [
             [_make_v4_cache(offset=99, pool_rows=25)],
             [_make_v4_cache(offset=99, pool_rows=25)],
@@ -286,6 +290,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [longer_raw_prompt, better_restore_prompt]
+        prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [
             [_make_v4_cache(offset=119, pool_rows=30)],
             [_make_v4_cache(offset=119, pool_rows=30)],
@@ -327,6 +332,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [unrestorable_prompt, restorable_prompt]
+        prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [
             [_make_v4_cache(offset=119, pool_rows=30)],
             [_make_v4_cache(offset=119, pool_rows=30)],
@@ -360,6 +366,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=119_999, pool_rows=30)]]
         prefix_cache._snapshots = [
             [
@@ -393,6 +400,7 @@ class TestKVPrefix:
         query = cached_prompt[:90]
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=118, pool_rows=29)]]
         prefix_cache._snapshots = [
             [
@@ -434,6 +442,7 @@ class TestKVPrefix:
         )
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
         prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
         prefix_cache._snapshots = [[snapshot]]
         prefix_cache._media_regions = [[]]
@@ -519,6 +528,7 @@ class TestKVPrefix:
     def test_v4_update_promotes_tail_snapshot_to_logarithmic_landmark(self):
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [mx.arange(79_000, dtype=mx.int32)]
+        prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [[_make_v4_cache(offset=78_999, pool_rows=20)]]
         prefix_cache._snapshots = [
             [
@@ -774,6 +784,91 @@ class TestKVPrefix:
             call(model, queue_sends=False),
         ]
 
+    def test_v4_generation_id_monotonic_on_add(self):
+            """Generation IDs are monotonic and increase with each add."""
+            prefix_cache = KVPrefixCache(None)
+
+            with patch(
+                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
+            ):
+                ids = []
+                for token_count in range(12, 72, 12):
+                    prompt = mx.arange(token_count, dtype=mx.int32)
+                    cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
+                    snapshot = CacheSnapshot(states=cache, token_count=token_count)
+                    prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+                    ids.append(prefix_cache._entry_generations[-1])
+
+            # IDs should be strictly increasing
+            assert ids == [1, 2, 3, 4, 5]
+            assert len(set(ids)) == 5  # all unique
+
+    def test_v4_generation_id_preserved_on_update(self):
+            """Generation ID is preserved when an entry is updated in place."""
+            prefix_cache = KVPrefixCache(None)
+
+            prompt = mx.arange(12, dtype=mx.int32)
+            cache = [_make_v4_cache(offset=12, pool_rows=3)]
+            snapshot = CacheSnapshot(states=cache, token_count=12)
+            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+            original_gen = prefix_cache._entry_generations[0]
+
+            # Update the entry
+            updated_prompt = mx.arange(24, dtype=mx.int32)
+            updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+            prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
+
+            # Generation should be the same after update
+            assert prefix_cache._entry_generations[0] == original_gen
+
+    def test_v4_generation_id_survives_index_shift(self):
+            """Generation IDs move with entries when eviction shifts indices."""
+            prefix_cache = KVPrefixCache(None)
+
+            with patch(
+                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
+            ):
+                for token_count in range(12, 72, 12):
+                    prompt = mx.arange(token_count, dtype=mx.int32)
+                    cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
+                    snapshot = CacheSnapshot(states=cache, token_count=token_count)
+                    prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+            # After 5 adds with cap 3, oldest 2 should be evicted
+            # Remaining: token_counts 36, 48, 60 with generations 3, 4, 5
+            assert len(prefix_cache._entry_generations) == 3
+            assert prefix_cache._entry_generations == [3, 4, 5]
+            assert [len(p) for p in prefix_cache.prompts] == [36, 48, 60]
+
+    def test_v4_generation_id_rollback_on_failed_add(self):
+        """Generation list stays aligned with other collections on failed add.
+
+        Simulate failure by making deepcopy fail on the second add call,
+        which triggers add_kv_cache rollback.
+        """
+        prefix_cache = KVPrefixCache(None)
+
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        # Second add fails during deepcopy, triggering rollback
+        with patch(
+            "exo.worker.engines.mlx.cache.deepcopy",
+            side_effect=RuntimeError("copy failed"),
+        ):
+            with pytest.raises(RuntimeError, match="copy failed"):
+                bad_prompt = mx.arange(24, dtype=mx.int32)
+                bad_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+                bad_snapshot = CacheSnapshot(states=bad_cache, token_count=24)
+                prefix_cache.add_kv_cache(bad_prompt, bad_cache, [bad_snapshot])
+
+        # After rollback, all collections should be length 1 (original entry only)
+        assert len(prefix_cache.prompts) == 1
+        assert len(prefix_cache._entry_generations) == 1
+        assert prefix_cache._entry_generations == [1]
 
 def _load_gpt_oss() -> tuple[Model, object]:
     from mlx_lm.utils import load_model
@@ -1269,3 +1364,4 @@ class TestKVPrefixCacheWithModel:
         assert len(kv_prefix_cache.prompts) == 1
         # The surviving entry should be the newly added one
         assert get_prefix_length(kv_prefix_cache.prompts[0], tokens) == len(tokens)
+
