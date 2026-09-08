@@ -475,13 +475,14 @@ class TestKVPrefix:
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
 
-    def test_v4_add_retains_five_entries_and_evicts_the_lru(self):
+    def test_v4_add_retains_three_entries_and_evicts_the_lru(self):
+        """Default cap is 3; verify retention and LRU eviction."""
         prefix_cache = KVPrefixCache(None)
 
         with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 5
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
         ):
-            for token_count in range(12, 72, 12):
+            for token_count in range(12, 60, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [
                     _make_v4_cache(
@@ -495,27 +496,25 @@ class TestKVPrefix:
                 )
                 prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
-            assert len(prefix_cache.prompts) == 5
+            assert len(prefix_cache.prompts) == 3
 
-            prompt = mx.arange(72, dtype=mx.int32)
-            cache = [_make_v4_cache(offset=72, pool_rows=18)]
-            snapshot = CacheSnapshot(states=cache, token_count=72)
+            prompt = mx.arange(60, dtype=mx.int32)
+            cache = [_make_v4_cache(offset=60, pool_rows=15)]
+            snapshot = CacheSnapshot(states=cache, token_count=60)
             prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
-        assert len(prefix_cache.prompts) == 5
+        assert len(prefix_cache.prompts) == 3
         assert [len(prompt) for prompt in prefix_cache.prompts] == [
-            24,
             36,
             48,
             60,
-            72,
         ]
         assert all(snapshots is not None for snapshots in prefix_cache._snapshots)
         assert [
             snapshots[0].token_count
             for snapshots in prefix_cache._snapshots
             if snapshots is not None
-        ] == [24, 36, 48, 60, 72]
+        ] == [36, 48, 60]
 
     def test_v4_update_promotes_tail_snapshot_to_logarithmic_landmark(self):
         prefix_cache = KVPrefixCache(None)
@@ -558,11 +557,14 @@ class TestKVPrefix:
         )
 
         assert prefix_cache._snapshots[0] is not None
+        # With tail=4, the second update retains 4 tail snapshots
+        # instead of 3, producing an additional snapshot at 80999
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             8_192,
             18_432,
             38_912,
             78_999,
+            80_999,
             86_000,
             88_000,
             89_999,
