@@ -61,7 +61,7 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 3
 )
 
-# Retain fixed logarithmic anchors plus the two tail-safe rollback points and
+# Retain fixed logarithmic anchors plus the three tail-safe rollback points and
 # exact pre-generation state. The anchor count grows only logarithmically.
 _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
 _V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 4

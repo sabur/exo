@@ -476,7 +476,7 @@ class TestKVPrefix:
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
 
     def test_v4_add_retains_three_entries_and_evicts_the_lru(self):
-        """Default cap is 3; verify retention and LRU eviction."""
+        """A cap of 3 retains three entries and evicts the LRU."""
         prefix_cache = KVPrefixCache(None)
 
         with patch(
