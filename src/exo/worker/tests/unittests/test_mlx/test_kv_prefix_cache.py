@@ -1497,7 +1497,10 @@ class TestExperimentalBCapFour:
         assert prompt_lengths == [12, 24, 36, 60]
 
         # Assert the evicted entry was specifically the old transient
-        assert transient_prompt not in prefix_cache.prompts
+        # Use identity checks (not mx.array equality) to avoid MLX broadcasting
+        assert all(
+            prompt is not transient_prompt for prompt in prefix_cache.prompts
+        )
         assert transient_gen not in prefix_cache._entry_generations
 
     def test_v4_selected_log_contains_entry_id_and_ordinal(self):
