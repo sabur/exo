@@ -59,7 +59,7 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 
 
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
-    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 3
+    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
 )
 
 # Retain fixed logarithmic anchors plus the three tail-safe rollback points and
@@ -736,12 +736,24 @@ class KVPrefixCache:
                 )
             return make_kv_cache(model), prompt_tokens, None, False
 
+        # Derive snapshot ordinal: 0 = newest (largest token_count)
+        _snapshots = self._snapshots[best_index] if best_index < len(self._snapshots) else None
+        if _snapshots and best_restore_snap is not None:
+            _sorted = sorted(_snapshots, key=lambda s: s.token_count, reverse=True)
+            try:
+                _ordinal = _sorted.index(best_restore_snap)
+            except ValueError:
+                _ordinal = -1
+        else:
+            _ordinal = -1
+
         logger.info(
             "KV cache selected: "
             f"entry={best_index}, raw={best_raw_length}/{max_length}, "
             f"validated={best_length}, restore={best_restore_pos}, "
             f"cached={best_cached_length}, exact={best_is_exact}, "
-            f"entry_id={self._instance_id}:{self._entry_generations[best_index]}"
+            f"entry_id={self._instance_id}:{self._entry_generations[best_index]}, "
+            f"ordinal={_ordinal}"
         )
 
         prompt_cache = deepcopy(self.caches[best_index])
