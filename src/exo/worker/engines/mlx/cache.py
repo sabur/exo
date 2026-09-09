@@ -740,7 +740,8 @@ class KVPrefixCache:
             "KV cache selected: "
             f"entry={best_index}, raw={best_raw_length}/{max_length}, "
             f"validated={best_length}, restore={best_restore_pos}, "
-            f"cached={best_cached_length}, exact={best_is_exact}"
+            f"cached={best_cached_length}, exact={best_is_exact}, "
+            f"entry_id={self._instance_id}:{self._entry_generations[best_index]}"
         )
 
         prompt_cache = deepcopy(self.caches[best_index])
