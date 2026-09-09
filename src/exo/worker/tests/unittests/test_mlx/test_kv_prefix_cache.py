@@ -1440,7 +1440,13 @@ class TestExperimentalBCapFour:
         assert _V4_PREFIX_CACHE_MAX_ENTRIES == 4
 
     def test_v4_four_slot_lru_evicts_transient_retains_durables(self):
-        """Three durable entries survive after adding 4+ entries and touching durables."""
+        """Three durable entries survive after adding 4+ entries and touching durables.
+
+        Each durable is touched with a query one token longer than the cached prompt
+        so the V4 snapshot-based selection produces a usable candidate and refreshes
+        _last_used. The transient (index 3, 48 tokens) is never touched, so it becomes
+        the LRU and gets evicted when the next entry arrives.
+        """
         prefix_cache = KVPrefixCache(None)
 
         with patch(
@@ -1457,13 +1463,26 @@ class TestExperimentalBCapFour:
 
             assert len(prefix_cache.prompts) == 4
 
-            # Touch the three durable entries via get_kv_cache to make
-            # their _last_used newer than the transient at index 3.
+            # Record the transient prompt and generation for later assertion
+            transient_prompt = prefix_cache.prompts[3]
+            transient_gen = prefix_cache._entry_generations[3]
+
+            # Touch the three durable entries with a query one token longer
+            # that shares the full cached prompt. This makes target == cached
+            # snapshot length, producing a usable restore point and refreshing
+            # _last_used.
             for i in range(3):
-                prefix_cache.get_kv_cache(MagicMock(), prefix_cache.prompts[i])
+                query = mx.concatenate([
+                    prefix_cache.prompts[i],
+                    mx.array([10_000 + i], dtype=mx.int32),
+                ])
+                _, _, matched_index, _ = prefix_cache.get_kv_cache(
+                    MagicMock(), query
+                )
+                assert matched_index == i, f"Durable {i} was not selected"
 
             # Add a new entry -- should evict the old transient (index 3)
-            # which now has the smallest _last_used.
+            # which now has the smallest _last_used since it was never touched.
             prompt = mx.arange(60, dtype=mx.int32)
             cache = [_make_v4_cache(offset=60, pool_rows=15)]
             snapshot = CacheSnapshot(states=cache, token_count=60)
@@ -1477,16 +1496,24 @@ class TestExperimentalBCapFour:
         prompt_lengths = sorted([len(p) for p in prefix_cache.prompts])
         assert prompt_lengths == [12, 24, 36, 60]
 
-    def test_v4_selected_log_contains_entry_id_and_ordinal(self, caplog):
+        # Assert the evicted entry was specifically the old transient
+        assert transient_prompt not in prefix_cache.prompts
+        assert transient_gen not in prefix_cache._entry_generations
+
+    def test_v4_selected_log_contains_entry_id_and_ordinal(self):
         """The KV cache selected log line includes entry_id and ordinal.
 
         Construct an entry with three snapshots (token_counts 50, 80, 99),
-        query a non-exact match so the restore point falls on the middle
-        snapshot (ordinal 1), and verify the log line.
+        query a non-exact match (97 tokens, only 95 shared) so the restore
+        point falls on the middle snapshot (ordinal 1). Patch the Loguru
+        logger directly since caplog does not capture it.
         """
-        # Prompt is 120 tokens; query is 95 tokens (non-exact match).
+        # Prompt is 120 tokens; query is 97 tokens sharing only 95 prefix.
         prompt = mx.arange(120, dtype=mx.int32)
-        query = mx.arange(95, dtype=mx.int32)
+        query = mx.concatenate([
+            prompt[:95],
+            mx.array([10_000, 10_001], dtype=mx.int32),
+        ])
 
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [prompt]
@@ -1495,7 +1522,7 @@ class TestExperimentalBCapFour:
 
         # Three snapshots: newest at 99, middle at 80, oldest at 50.
         # Sorted by token_count descending: 99 (ord0), 80 (ord1), 50 (ord2).
-        # Query of 95 tokens should restore at token_count=80, so ordinal=1.
+        # Query with 95 shared prefix, target=95, restore at 80, ordinal=1.
         prefix_cache._snapshots = [
             [
                 CacheSnapshot(
@@ -1516,7 +1543,9 @@ class TestExperimentalBCapFour:
         prefix_cache._last_used = [10]
         prefix_cache.prefill_tps = [0.0]
 
-        with caplog.at_level("INFO"):
+        with patch(
+            "exo.worker.engines.mlx.cache.logger.info"
+        ) as log_info:
             restored, remaining, matched_index, is_exact = (
                 prefix_cache.get_kv_cache(MagicMock(), query)
             )
@@ -1527,31 +1556,45 @@ class TestExperimentalBCapFour:
         assert cache_length(restored) == 80
 
         # Verify the log line contains the expected entry_id and ordinal
-        assert "entry_id=" in caplog.text
-        assert "ordinal=1" in caplog.text
+        selected = [
+            call.args[0] for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache selected:")
+        ]
+        assert len(selected) == 1
+        assert f"entry_id={prefix_cache._instance_id}:42" in selected[0]
+        assert "ordinal=1" in selected[0]
 
-    def test_v4_selected_log_ordinal_minus_one_when_no_v4_snapshot(self, caplog):
-        """Ordinal is -1 when the entry has no snapshots or best_restore_snap is None.
+    def test_v4_selected_log_ordinal_minus_one_when_no_v4_snapshot(self):
+        """Ordinal is -1 when best_restore_snap is None (no V4 snapshots).
 
-        Exact match with a non-V4 cache means no restore snap is needed,
-        so ordinal should be -1.
+        A non-V4 cache with _snapshots=[None] still produces a usable
+        candidate, but no restore snap is set, so ordinal=-1.
         """
         query = mx.arange(100, dtype=mx.int32)
 
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [query]
         prefix_cache._entry_generations = [7]
-        prefix_cache.caches = [[_make_v4_cache(offset=99, pool_rows=25)]]
-        # No snapshots attached
+        # Use a plain KVCache (not V4) so no SSM snapshots are needed;
+        # the entry is still restorable but best_restore_snap is None.
+        prefix_cache.caches = [[KVCache()]]
         prefix_cache._snapshots = [None]
         prefix_cache._media_regions = [[]]
         prefix_cache._last_used = [10]
         prefix_cache.prefill_tps = [0.0]
 
-        with caplog.at_level("INFO"):
+        with patch(
+            "exo.worker.engines.mlx.cache.logger.info"
+        ) as log_info:
             restored, remaining, matched_index, is_exact = (
                 prefix_cache.get_kv_cache(MagicMock(), query)
             )
 
         assert matched_index == 0
-        assert "ordinal=-1" in caplog.text
+
+        selected = [
+            call.args[0] for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache selected:")
+        ]
+        assert len(selected) == 1
+        assert "ordinal=-1" in selected[0]
