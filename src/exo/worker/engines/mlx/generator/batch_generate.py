@@ -82,6 +82,7 @@ class _EngineTask:
     generated_text_parts: list[str] = field(default_factory=list)
     potential_stop_sequence_text: str = ""
     completion_tokens: int = 0
+    request_start_time: float = 0.0
     generation_start_time: float = 0.0
     prefill_tps: float = 0.0
     prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
@@ -126,6 +127,7 @@ class ExoBatchGenerator:
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
     ) -> int:
+        request_start_time = time.perf_counter()
         all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
         all_prompt_tokens = fix_unmatched_think_end_tokens(
             all_prompt_tokens, self.tokenizer
@@ -318,6 +320,7 @@ class ExoBatchGenerator:
             matched_index=matched_index,
             detokenizer=self.tokenizer.detokenizer,
             on_generation_token=on_generation_token,
+            request_start_time=request_start_time,
             generation_start_time=time.perf_counter(),
             prefill_tps=_prefill_tps,
             prefix_cache_hit=prefix_cache_hit,
@@ -354,6 +357,12 @@ class ExoBatchGenerator:
             now = time.perf_counter()
             if state.first_gen_token_time is None:
                 state.first_gen_token_time = now
+                logger.info(
+                    "[INSTRUMENT] Time to first token: "
+                    f"total_ms={(now - state.request_start_time) * 1000:.1f}, "
+                    f"decode_ms={(now - state.generation_start_time) * 1000:.1f}, "
+                    f"cached={state.prefix_hit_length}/{len(state.all_prompt_tokens)}"
+                )
             state.last_gen_token_time = now
             if state.on_generation_token is not None:
                 state.on_generation_token()

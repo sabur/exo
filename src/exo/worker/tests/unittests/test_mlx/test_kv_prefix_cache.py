@@ -1566,6 +1566,8 @@ class TestExperimentalBCapFour:
         assert len(selected) == 1
         assert f"entry_id={prefix_cache._instance_id}:42" in selected[0]
         assert "ordinal=1" in selected[0]
+        assert "selection_ms=" in selected[0]
+        assert "materialize_ms=" in selected[0]
 
     def test_v4_selected_log_ordinal_minus_one_when_no_v4_snapshot(self):
         """Ordinal is -1 when best_restore_snap is None (no V4 snapshots).
@@ -1601,3 +1603,5 @@ class TestExperimentalBCapFour:
         ]
         assert len(selected) == 1
         assert "ordinal=-1" in selected[0]
+        assert "selection_ms=" in selected[0]
+        assert "materialize_ms=" in selected[0]

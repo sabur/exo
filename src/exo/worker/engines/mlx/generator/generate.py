@@ -689,6 +689,7 @@ def mlx_generate(
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
 ) -> Generator[GenerationResponse]:
+    request_start_time = time.perf_counter()
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
     # TODO: Randomise task seed and set in taskparams, instead of hard coding as 42.
@@ -973,6 +974,14 @@ def mlx_generate(
         ),
         start=1,
     ):
+        if completion_tokens == 1:
+            now = time.perf_counter()
+            logger.info(
+                "[INSTRUMENT] Time to first token: "
+                f"total_ms={(now - request_start_time) * 1000:.1f}, "
+                f"decode_ms={(now - generation_start_time) * 1000:.1f}, "
+                f"cached={prefix_hit_length}/{len(all_prompt_tokens)}"
+            )
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 

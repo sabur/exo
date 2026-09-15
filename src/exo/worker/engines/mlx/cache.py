@@ -1,5 +1,6 @@
 import gc
 import os
+import time
 import uuid
 from copy import deepcopy
 from typing import TYPE_CHECKING
@@ -638,6 +639,7 @@ class KVPrefixCache:
         a cached media region whose content_hash differs from the query's, the
         match is truncated to the start of that region.
         """
+        selection_start = time.perf_counter()
         max_length = len(prompt_tokens)
         query_regions = media_regions or []
 
@@ -729,12 +731,15 @@ class KVPrefixCache:
             logger.info("KV cache candidates: " + " | ".join(candidate_details))
 
         if best_index is None:
+            selection_ms = (time.perf_counter() - selection_start) * 1000
             if self.prompts:
                 logger.info(
                     "KV cache miss: no restorable token prefix across "
-                    f"{len(self.prompts)} entries"
+                    f"{len(self.prompts)} entries, selection_ms={selection_ms:.3f}"
                 )
             return make_kv_cache(model), prompt_tokens, None, False
+
+        selection_ms = (time.perf_counter() - selection_start) * 1000
 
         # Derive snapshot ordinal: 0 = newest (largest token_count)
         _snapshots = self._snapshots[best_index] if best_index < len(self._snapshots) else None
@@ -747,15 +752,7 @@ class KVPrefixCache:
         else:
             _ordinal = -1
 
-        logger.info(
-            "KV cache selected: "
-            f"entry={best_index}, raw={best_raw_length}/{max_length}, "
-            f"validated={best_length}, restore={best_restore_pos}, "
-            f"cached={best_cached_length}, exact={best_is_exact}, "
-            f"entry_id={self._instance_id}:{self._entry_generations[best_index]}, "
-            f"ordinal={_ordinal}"
-        )
-
+        materialize_start = time.perf_counter()
         prompt_cache = deepcopy(self.caches[best_index])
         tokens_to_trim = best_cached_length - best_restore_pos
         if tokens_to_trim > 0:
@@ -768,6 +765,17 @@ class KVPrefixCache:
                     continue
                 if hasattr(c, "offset"):
                     c.offset = best_restore_pos
+        materialize_ms = (time.perf_counter() - materialize_start) * 1000
+
+        logger.info(
+            "KV cache selected: "
+            f"entry={best_index}, raw={best_raw_length}/{max_length}, "
+            f"validated={best_length}, restore={best_restore_pos}, "
+            f"cached={best_cached_length}, exact={best_is_exact}, "
+            f"entry_id={self._instance_id}:{self._entry_generations[best_index]}, "
+            f"ordinal={_ordinal}, selection_ms={selection_ms:.3f}, "
+            f"materialize_ms={materialize_ms:.3f}"
+        )
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter
