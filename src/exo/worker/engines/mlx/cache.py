@@ -64,7 +64,7 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
 )
 _V4_POST_DECODE_PROMOTION_ENABLED = (
-    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "false").lower()
+    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "true").lower()
     == "true"
 )
 
