@@ -63,17 +63,13 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
 )
-_V4_POST_DECODE_PROMOTION_ENABLED = (
-    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "false").lower()
-    == "true"
-)
 
 # Retain fixed logarithmic anchors plus four tail-safe rollback points and the
 # exact pre-generation state. The extra tail point prevents an ordinary update
 # from creating a 50K-token restore cliff near large-context boundaries.
 _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
 _V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 5
-_DECODE_OBSERVATION_LIMIT = 4
+_PROMPT_OBSERVATION_LIMIT = 4
 
 
 class CacheSnapshot:
@@ -95,9 +91,8 @@ class CacheSnapshot:
 
 
 @dataclass
-class _DecodeObservation:
+class _PromptObservation:
     base_prompt: mx.array
-    continuation: mx.array
     source: str
 
 
@@ -351,7 +346,7 @@ class KVPrefixCache:
         self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
         self._next_generation: int = 1
         self._group = group
-        self._decode_observations: list[_DecodeObservation] = []
+        self._prompt_observations: list[_PromptObservation] = []
         
         # Structured cache separation: semantic boundaries
         # Each segment is cached independently with a hash for change detection
@@ -366,189 +361,65 @@ class KVPrefixCache:
         self._media_regions.clear()
         self._last_used.clear()
         self._entry_generations.clear()
-        self._decode_observations.clear()
+        self._prompt_observations.clear()
         # Do NOT reset _next_generation — generation IDs are monotonic for the object lifetime
         # Do NOT reset _instance_id — it is the immutable cache-instance namespace
         self.prefill_tps.clear()
         # Keep segmented caches - they persist across turns unless invalidated
 
-    def record_decode_observation(
+    def record_prompt_observation(
         self,
         base_prompt: mx.array,
-        generated_sequence: list[int],
         source: str,
-        completed_cache: KVCacheType | None = None,
-        media_regions: list["MediaRegion"] | None = None,
-        prefill_tps: float = 0.0,
     ) -> None:
-        if not generated_sequence:
-            return
-
-        max_overlap = min(32, len(base_prompt), len(generated_sequence))
-        base_tail = cast(list[int], base_prompt[-max_overlap:].tolist())
-        overlap = 0
-        for candidate in range(max_overlap, 0, -1):
-            if base_tail[-candidate:] == generated_sequence[:candidate]:
-                overlap = candidate
-                break
-
-        continuation = mx.array(
-            generated_sequence[overlap:],
-            dtype=base_prompt.dtype,
-        )
-        self._decode_observations.append(
-            _DecodeObservation(
+        self._prompt_observations.append(
+            _PromptObservation(
                 base_prompt=base_prompt,
-                continuation=continuation,
                 source=source,
             )
         )
-        del self._decode_observations[:-_DECODE_OBSERVATION_LIMIT]
+        del self._prompt_observations[:-_PROMPT_OBSERVATION_LIMIT]
         logger.info(
-            "[INSTRUMENT] Decode cache observation recorded: "
-            f"source={source}, base={len(base_prompt)}, "
-            f"sequence={len(generated_sequence)}, overlap={overlap}, "
-            f"continuation={len(continuation)}"
+            "[INSTRUMENT] Prompt cache observation recorded: "
+            f"source={source}, base={len(base_prompt)}"
         )
-        if completed_cache is not None and len(continuation) > 0:
-            try:
-                self._promote_decode_cache(
-                    base_prompt,
-                    continuation,
-                    completed_cache,
-                    source,
-                    media_regions,
-                    prefill_tps,
-                )
-            except Exception:
-                logger.warning("Failed to promote decode cache", exc_info=True)
-
-    def _promote_decode_cache(
-        self,
-        base_prompt: mx.array,
-        continuation: mx.array,
-        completed_cache: KVCacheType,
-        source: str,
-        media_regions: list["MediaRegion"] | None,
-        prefill_tps: float,
-    ) -> None:
-        if not _V4_POST_DECODE_PROMOTION_ENABLED:
-            return
-        if _V4_PREFIX_CACHE_MAX_ENTRIES < 2:
-            logger.warning(
-                "Decode cache promotion skipped: "
-                "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES must be at least 2"
-            )
-            return
-        if not has_deepseek_v4_cache(completed_cache):
-            return
-
-        promoted_prompt = mx.concatenate([base_prompt, continuation])
-        promoted_length = len(promoted_prompt)
-        completed_length = cache_length(completed_cache)
-        if completed_length != promoted_length:
-            logger.warning(
-                "Decode cache promotion skipped: "
-                f"source={source}, prompt={promoted_length}, "
-                f"cache={completed_length}, reason=length-mismatch"
-            )
-            return
-
-        self.add_kv_cache(
-            promoted_prompt,
-            completed_cache,
-            None,
-            media_regions=media_regions,
-            prefill_tps=prefill_tps,
-            copy_cache=False,
-        )
-        logger.info(
-            "Decode cache promoted: "
-            f"source={source}, tokens={promoted_length}, "
-            f"continuation={len(continuation)}"
-        )
-
-    def _log_decode_promotion_opportunity(
+    def _log_prompt_alignment(
         self,
         prompt_tokens: mx.array,
         current_restore: int,
     ) -> None:
         start = time.perf_counter()
-        best_reusable = 0
         best_base_match = 0
-        best_continuation_match = 0
-        unavailable_base_match = 0
-        unavailable_continuation_match = 0
-        unavailable_reason = "base-diverged"
-        unavailable_observation: _DecodeObservation | None = None
-        best: _DecodeObservation | None = None
-        for observation in self._decode_observations:
+        best_observation: _PromptObservation | None = None
+        for observation in self._prompt_observations:
             base_match = get_prefix_length(prompt_tokens, observation.base_prompt)
-            if base_match < len(observation.base_prompt):
-                continuation_match = 0
-                reusable = 0
-            else:
-                continuation_match = get_prefix_length(
-                    prompt_tokens[len(observation.base_prompt) :],
-                    observation.continuation,
-                )
-                reusable = (
-                    len(observation.base_prompt) + continuation_match
-                    if continuation_match == len(observation.continuation)
-                    else 0
-                )
-            if (base_match, continuation_match) > (
-                unavailable_base_match,
-                unavailable_continuation_match,
-            ):
-                unavailable_base_match = base_match
-                unavailable_continuation_match = continuation_match
-                unavailable_reason = (
-                    "base-diverged"
-                    if base_match < len(observation.base_prompt)
-                    else "continuation-diverged"
-                )
-                unavailable_observation = observation
-            if reusable > best_reusable:
-                best_reusable = reusable
+            if base_match > best_base_match:
                 best_base_match = base_match
-                best_continuation_match = continuation_match
-                best = observation
+                best_observation = observation
 
-        if best is None:
-            analysis_ms = (time.perf_counter() - start) * 1000
-            if unavailable_base_match > 0 and unavailable_observation is not None:
-                base_length = len(unavailable_observation.base_prompt)
-                base_window = _token_window(
-                    unavailable_observation.base_prompt,
-                    unavailable_base_match,
-                )
-                prompt_window = _token_window(
-                    prompt_tokens,
-                    unavailable_base_match,
-                )
-                logger.info(
-                    "[INSTRUMENT] Decode cache promotion unavailable: "
-                    f"base_match={unavailable_base_match}/{len(prompt_tokens)}, "
-                    f"base_length={base_length}, "
-                    f"base_remaining={max(0, base_length - unavailable_base_match)}, "
-                    f"prompt_remaining={len(prompt_tokens) - unavailable_base_match}, "
-                    f"continuation_match={unavailable_continuation_match}, "
-                    f"reason={unavailable_reason}, "
-                    f"base_window={base_window}, "
-                    f"prompt_window={prompt_window}, "
-                    f"analysis_ms={analysis_ms:.3f}"
-                )
+        if best_observation is None:
             return
 
+        base_length = len(best_observation.base_prompt)
+        base_window = _token_window(
+            best_observation.base_prompt,
+            best_base_match,
+        )
+        prompt_window = _token_window(
+            prompt_tokens,
+            best_base_match,
+        )
         analysis_ms = (time.perf_counter() - start) * 1000
         logger.info(
-            "[INSTRUMENT] Decode cache promotion opportunity: "
-            f"source={best.source}, reusable={best_reusable}/{len(prompt_tokens)}, "
-            f"base_match={best_base_match}, "
-            f"continuation_match={best_continuation_match}, "
+            "[INSTRUMENT] Prompt cache alignment: "
+            f"source={best_observation.source}, "
+            f"base_match={best_base_match}/{len(prompt_tokens)}, "
+            f"base_length={base_length}, "
+            f"base_remaining={max(0, base_length - best_base_match)}, "
+            f"prompt_remaining={len(prompt_tokens) - best_base_match}, "
             f"current_restore={current_restore}, "
-            f"potential_saved={max(0, best_reusable - current_restore)}, "
+            f"base_window={base_window}, "
+            f"prompt_window={prompt_window}, "
             f"analysis_ms={analysis_ms:.3f}"
         )
 
@@ -696,8 +567,6 @@ class KVPrefixCache:
         ssm_snapshots: list[CacheSnapshot] | None = None,
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
-        *,
-        copy_cache: bool = True,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         is_v4 = has_deepseek_v4_cache(cache)
@@ -706,7 +575,7 @@ class KVPrefixCache:
             return
 
         store_start = time.perf_counter()
-        stored_cache = deepcopy(cache) if copy_cache else cache
+        stored_cache = deepcopy(cache)
         store_ms = (time.perf_counter() - store_start) * 1000
         stored_snapshots = (
             _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
@@ -882,9 +751,6 @@ class KVPrefixCache:
 
             candidate_cache = self.caches[i]
             candidate_cached_length = cache_length(candidate_cache)
-            candidate_is_completed_boundary = (
-                candidate_cached_length == len(cached_prompt)
-            )
             candidate_has_ssm = has_non_kv_caches(candidate_cache)
             if candidate_has_ssm:
                 target = (
@@ -896,27 +762,14 @@ class KVPrefixCache:
                 desired = (max_length - 1) if candidate_is_exact else validated_length
                 target = min(candidate_cached_length, desired)
 
-            if (
-                candidate_is_completed_boundary
-                and target == candidate_cached_length
-            ):
-                restore_pos, restore_snap = candidate_cached_length, None
-            else:
-                restore_pos, restore_snap = self._get_snapshot(i, target)
+            restore_pos, restore_snap = self._get_snapshot(i, target)
             snapshots = self._snapshots[i] or []
             snapshot_positions = [snapshot.token_count for snapshot in snapshots]
             snapshot_mib = sum(snapshot.nbytes for snapshot in snapshots) / (1 << 20)
             stored_cache_mib = sum(
                 _cache_state_nbytes(state) for state in candidate_cache
             ) / (1 << 20)
-            usable = (
-                (
-                    candidate_is_completed_boundary
-                    and restore_pos == candidate_cached_length
-                )
-                or restore_snap is not None
-                or not candidate_has_ssm
-            )
+            usable = restore_snap is not None or not candidate_has_ssm
             candidate_details.append(
                 f"{i}:tokens={len(cached_prompt)},raw={raw_length},"
                 f"validated={validated_length},restore={restore_pos},"
@@ -960,7 +813,7 @@ class KVPrefixCache:
                     "KV cache miss: no restorable token prefix across "
                     f"{len(self.prompts)} entries, selection_ms={selection_ms:.3f}"
                 )
-            self._log_decode_promotion_opportunity(prompt_tokens, 0)
+            self._log_prompt_alignment(prompt_tokens, 0)
             return make_kv_cache(model), prompt_tokens, None, False
 
         selection_ms = (time.perf_counter() - selection_start) * 1000
@@ -1000,7 +853,7 @@ class KVPrefixCache:
             f"ordinal={_ordinal}, selection_ms={selection_ms:.3f}, "
             f"materialize_ms={materialize_ms:.3f}"
         )
-        self._log_decode_promotion_opportunity(prompt_tokens, best_restore_pos)
+        self._log_prompt_alignment(prompt_tokens, best_restore_pos)
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter

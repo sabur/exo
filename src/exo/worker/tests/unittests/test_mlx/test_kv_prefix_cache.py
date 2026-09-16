@@ -970,278 +970,52 @@ class TestKVPrefix:
         composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
 
-    def test_decode_observation_logs_potential_saved_tokens(self):
+    def test_prompt_observation_logs_alignment_boundary(self):
         prefix_cache = KVPrefixCache(None)
         base_prompt = mx.arange(10, dtype=mx.int32)
 
         with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
-            prefix_cache.record_decode_observation(
+            prefix_cache.record_prompt_observation(
                 base_prompt,
-                [8, 9, 10, 11, 12],
                 source="uid=7",
             )
 
         recorded = [
             call.args[0]
             for call in log_info.call_args_list
-            if call.args and "Decode cache observation recorded" in call.args[0]
+            if call.args and "Prompt cache observation recorded" in call.args[0]
         ]
         assert len(recorded) == 1
-        assert "overlap=2" in recorded[0]
-        assert "continuation=3" in recorded[0]
+        assert "source=uid=7" in recorded[0]
+        assert "base=10" in recorded[0]
 
-        next_prompt = mx.arange(14, dtype=mx.int32)
-        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
-            prefix_cache._log_decode_promotion_opportunity(
-                next_prompt,
-                current_restore=10,
-            )
-
-        opportunities = [
-            call.args[0]
-            for call in log_info.call_args_list
-            if call.args and "Decode cache promotion opportunity" in call.args[0]
-        ]
-        assert len(opportunities) == 1
-        assert "source=uid=7" in opportunities[0]
-        assert "reusable=13/14" in opportunities[0]
-        assert "base_match=10" in opportunities[0]
-        assert "continuation_match=3" in opportunities[0]
-        assert "potential_saved=3" in opportunities[0]
-        assert "analysis_ms=" in opportunities[0]
-
-    def test_decode_observation_does_not_claim_base_only_match_as_promotion(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        prefix_cache.record_decode_observation(
-            base_prompt,
-            [8, 9, 10, 11, 12],
-            source="uid=7",
-        )
         next_prompt = mx.concatenate(
             [
                 mx.arange(8, dtype=mx.int32),
                 mx.array([99, 100, 101], dtype=mx.int32),
             ]
         )
-
         with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
-            prefix_cache._log_decode_promotion_opportunity(
+            prefix_cache._log_prompt_alignment(
                 next_prompt,
                 current_restore=6,
             )
 
-        messages = [
+        alignments = [
             call.args[0]
             for call in log_info.call_args_list
-            if call.args
+            if call.args and "Prompt cache alignment" in call.args[0]
         ]
-        assert not any("promotion opportunity" in message for message in messages)
-        unavailable = [
-            message
-            for message in messages
-            if "Decode cache promotion unavailable" in message
-        ]
-        assert len(unavailable) == 1
-        assert "base_match=8/11" in unavailable[0]
-        assert "base_length=10" in unavailable[0]
-        assert "base_remaining=2" in unavailable[0]
-        assert "prompt_remaining=3" in unavailable[0]
-        assert "continuation_match=0" in unavailable[0]
-        assert "reason=base-diverged" in unavailable[0]
-        assert "base_window=[4, 5, 6, 7, 8, 9]" in unavailable[0]
-        assert "prompt_window=[4, 5, 6, 7, 99, 100, 101]" in unavailable[0]
-
-    def test_decode_observation_requires_full_continuation_match(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        prefix_cache.record_decode_observation(
-            base_prompt,
-            [8, 9, 10, 11, 12],
-            source="uid=7",
-        )
-        next_prompt = mx.concatenate(
-            [
-                base_prompt,
-                mx.array([10, 11, 99], dtype=mx.int32),
-            ]
-        )
-
-        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
-            prefix_cache._log_decode_promotion_opportunity(
-                next_prompt,
-                current_restore=10,
-            )
-
-        messages = [
-            call.args[0]
-            for call in log_info.call_args_list
-            if call.args
-        ]
-        assert not any("promotion opportunity" in message for message in messages)
-        unavailable = [
-            message
-            for message in messages
-            if "Decode cache promotion unavailable" in message
-        ]
-        assert len(unavailable) == 1
-        assert "base_match=10/13" in unavailable[0]
-        assert "continuation_match=2" in unavailable[0]
-        assert "reason=continuation-diverged" in unavailable[0]
-
-    def test_decode_cache_promotion_adds_exact_boundary_candidate(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        base_cache = [_make_v4_cache(offset=10, pool_rows=3)]
-        prefix_cache.add_kv_cache(
-            base_prompt,
-            base_cache,
-            [CacheSnapshot(states=base_cache, token_count=10)],
-        )
-        completed_cache = [_make_v4_cache(offset=13, pool_rows=4)]
-
-        with (
-            patch(
-                "exo.worker.engines.mlx.cache._V4_POST_DECODE_PROMOTION_ENABLED",
-                True,
-            ),
-            patch("exo.worker.engines.mlx.cache.logger.info") as log_info,
-        ):
-            prefix_cache.record_decode_observation(
-                base_prompt,
-                [8, 9, 10, 11, 12],
-                source="uid=3",
-                completed_cache=completed_cache,
-            )
-
-        assert [len(prompt) for prompt in prefix_cache.prompts] == [10, 13]
-        assert prefix_cache.caches[1] is completed_cache
-        assert prefix_cache._snapshots[1] is None
-        promoted = [
-            call.args[0]
-            for call in log_info.call_args_list
-            if call.args and call.args[0].startswith("Decode cache promoted:")
-        ]
-        assert len(promoted) == 1
-        assert "source=uid=3" in promoted[0]
-        assert "tokens=13" in promoted[0]
-
-        _, remaining, matched_index, _ = prefix_cache.get_kv_cache(
-            MagicMock(),
-            mx.arange(14, dtype=mx.int32),
-        )
-
-        assert matched_index == 1
-        assert len(remaining) == 1
-
-    def test_exact_v4_cache_is_restorable_without_duplicate_snapshot(self):
-        prefix_cache = KVPrefixCache(None)
-        prompt = mx.arange(13, dtype=mx.int32)
-        cache = [_make_v4_cache(offset=13, pool_rows=4)]
-        prefix_cache.add_kv_cache(prompt, cache, None)
-
-        restored, remaining, matched_index, _ = prefix_cache.get_kv_cache(
-            MagicMock(),
-            mx.arange(14, dtype=mx.int32),
-        )
-
-        assert matched_index == 0
-        assert cache_length(restored) == 13
-        assert len(remaining) == 1
-
-    def test_decode_cache_promotion_falls_back_on_continuation_mismatch(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        base_cache = [_make_v4_cache(offset=10, pool_rows=3)]
-        prefix_cache.add_kv_cache(
-            base_prompt,
-            base_cache,
-            [CacheSnapshot(states=base_cache, token_count=10)],
-        )
-        completed_cache = [_make_v4_cache(offset=13, pool_rows=4)]
-
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_POST_DECODE_PROMOTION_ENABLED",
-            True,
-        ):
-            prefix_cache.record_decode_observation(
-                base_prompt,
-                [8, 9, 10, 11, 12],
-                source="uid=3",
-                completed_cache=completed_cache,
-            )
-
-        mismatched_prompt = mx.concatenate(
-            [
-                base_prompt,
-                mx.array([99, 100, 101, 102], dtype=mx.int32),
-            ]
-        )
-        _, remaining, matched_index, _ = prefix_cache.get_kv_cache(
-            MagicMock(),
-            mismatched_prompt,
-        )
-
-        assert matched_index == 0
-        assert len(remaining) == 4
-
-    def test_decode_cache_promotion_requires_two_v4_entries(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        base_cache = [_make_v4_cache(offset=10, pool_rows=3)]
-        prefix_cache.add_kv_cache(
-            base_prompt,
-            base_cache,
-            [CacheSnapshot(states=base_cache, token_count=10)],
-        )
-        completed_cache = [_make_v4_cache(offset=13, pool_rows=4)]
-
-        with (
-            patch(
-                "exo.worker.engines.mlx.cache._V4_POST_DECODE_PROMOTION_ENABLED",
-                True,
-            ),
-            patch(
-                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES",
-                1,
-            ),
-            patch("exo.worker.engines.mlx.cache.logger.warning") as log_warning,
-        ):
-            prefix_cache.record_decode_observation(
-                base_prompt,
-                [8, 9, 10, 11, 12],
-                source="uid=3",
-                completed_cache=completed_cache,
-            )
-
-        assert len(prefix_cache.prompts) == 1
-        assert mx.array_equal(prefix_cache.prompts[0], base_prompt)
-        log_warning.assert_called_once()
-
-    def test_decode_cache_promotion_rejects_cache_length_mismatch(self):
-        prefix_cache = KVPrefixCache(None)
-        base_prompt = mx.arange(10, dtype=mx.int32)
-        completed_cache = [_make_v4_cache(offset=12, pool_rows=3)]
-
-        with (
-            patch(
-                "exo.worker.engines.mlx.cache._V4_POST_DECODE_PROMOTION_ENABLED",
-                True,
-            ),
-            patch("exo.worker.engines.mlx.cache.logger.warning") as log_warning,
-        ):
-            prefix_cache.record_decode_observation(
-                base_prompt,
-                [8, 9, 10, 11, 12],
-                source="uid=3",
-                completed_cache=completed_cache,
-            )
-
-        assert prefix_cache.prompts == []
-        warning = log_warning.call_args.args[0]
-        assert "reason=length-mismatch" in warning
-        assert "prompt=13" in warning
-        assert "cache=12" in warning
+        assert len(alignments) == 1
+        assert "source=uid=7" in alignments[0]
+        assert "base_match=8/11" in alignments[0]
+        assert "base_length=10" in alignments[0]
+        assert "base_remaining=2" in alignments[0]
+        assert "prompt_remaining=3" in alignments[0]
+        assert "current_restore=6" in alignments[0]
+        assert "base_window=[4, 5, 6, 7, 8, 9]" in alignments[0]
+        assert "prompt_window=[4, 5, 6, 7, 99, 100, 101]" in alignments[0]
+        assert "analysis_ms=" in alignments[0]
 
     def test_v4_generation_index_shift_preserves_ids(self):
         """Generation IDs survive eviction-induced index shifts."""
