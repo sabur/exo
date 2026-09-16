@@ -1,5 +1,4 @@
 # type: ignore
-import logging
 import time
 from typing import cast
 from unittest.mock import MagicMock, call, patch
@@ -896,20 +895,20 @@ class TestKVPrefix:
         )
         assert prefix_cache._entry_generations == [1, 3]
 
-    def test_v4_generation_update_preserves_composite_id(self, caplog):
+    def test_v4_generation_update_preserves_composite_id(self):
         """update_kv_cache preserves the composite entry ID."""
         prefix_cache = KVPrefixCache(None)
 
         prompt = mx.arange(12, dtype=mx.int32)
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
-        with caplog.at_level(logging.INFO):
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
             prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
         added = [
-            record.message
-            for record in caplog.records
-            if record.message.startswith("KV cache added")
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache added")
         ]
         assert len(added) == 1
         assert "store_ms=" in added[0]
@@ -917,18 +916,17 @@ class TestKVPrefix:
         composite_before = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
 
         # Update the entry
-        caplog.clear()
         updated_prompt = mx.arange(24, dtype=mx.int32)
         updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-        with caplog.at_level(logging.INFO):
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
             prefix_cache.update_kv_cache(
                 0, updated_prompt, updated_cache, [], restore_pos=12
             )
 
         updated = [
-            record.message
-            for record in caplog.records
-            if record.message.startswith("KV cache updated")
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache updated")
         ]
         assert len(updated) == 1
         assert "store_ms=" in updated[0]
@@ -936,11 +934,11 @@ class TestKVPrefix:
         composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
 
-    def test_decode_observation_logs_potential_saved_tokens(self, caplog):
+    def test_decode_observation_logs_potential_saved_tokens(self):
         prefix_cache = KVPrefixCache(None)
         base_prompt = mx.arange(10, dtype=mx.int32)
 
-        with caplog.at_level(logging.INFO):
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
             prefix_cache.record_decode_observation(
                 base_prompt,
                 [8, 9, 10, 11, 12],
@@ -948,26 +946,25 @@ class TestKVPrefix:
             )
 
         recorded = [
-            record.message
-            for record in caplog.records
-            if "Decode cache observation recorded" in record.message
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and "Decode cache observation recorded" in call.args[0]
         ]
         assert len(recorded) == 1
         assert "overlap=2" in recorded[0]
         assert "continuation=3" in recorded[0]
 
-        caplog.clear()
         next_prompt = mx.arange(14, dtype=mx.int32)
-        with caplog.at_level(logging.INFO):
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
             prefix_cache._log_decode_promotion_opportunity(
                 next_prompt,
                 current_restore=10,
             )
 
         opportunities = [
-            record.message
-            for record in caplog.records
-            if "Decode cache promotion opportunity" in record.message
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and "Decode cache promotion opportunity" in call.args[0]
         ]
         assert len(opportunities) == 1
         assert "source=uid=7" in opportunities[0]
