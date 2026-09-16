@@ -865,6 +865,9 @@ class KVPrefixCache:
 
             candidate_cache = self.caches[i]
             candidate_cached_length = cache_length(candidate_cache)
+            candidate_is_completed_boundary = (
+                candidate_cached_length == len(cached_prompt)
+            )
             candidate_has_ssm = has_non_kv_caches(candidate_cache)
             if candidate_has_ssm:
                 target = (
@@ -876,7 +879,10 @@ class KVPrefixCache:
                 desired = (max_length - 1) if candidate_is_exact else validated_length
                 target = min(candidate_cached_length, desired)
 
-            if target == candidate_cached_length:
+            if (
+                candidate_is_completed_boundary
+                and target == candidate_cached_length
+            ):
                 restore_pos, restore_snap = candidate_cached_length, None
             else:
                 restore_pos, restore_snap = self._get_snapshot(i, target)
@@ -887,7 +893,10 @@ class KVPrefixCache:
                 _cache_state_nbytes(state) for state in candidate_cache
             ) / (1 << 20)
             usable = (
-                restore_pos == candidate_cached_length
+                (
+                    candidate_is_completed_boundary
+                    and restore_pos == candidate_cached_length
+                )
                 or restore_snap is not None
                 or not candidate_has_ssm
             )
