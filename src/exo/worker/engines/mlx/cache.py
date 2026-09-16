@@ -68,10 +68,11 @@ _V4_POST_DECODE_PROMOTION_ENABLED = (
     == "true"
 )
 
-# Retain fixed logarithmic anchors plus the three tail-safe rollback points and
-# exact pre-generation state. The anchor count grows only logarithmically.
+# Retain fixed logarithmic anchors plus four tail-safe rollback points and the
+# exact pre-generation state. The extra tail point prevents an ordinary update
+# from creating a 50K-token restore cliff near large-context boundaries.
 _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
-_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 4
+_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 5
 _DECODE_OBSERVATION_LIMIT = 4
 
 
@@ -479,6 +480,7 @@ class KVPrefixCache:
         unavailable_base_match = 0
         unavailable_continuation_match = 0
         unavailable_reason = "base-diverged"
+        unavailable_observation: _DecodeObservation | None = None
         best: _DecodeObservation | None = None
         for observation in self._decode_observations:
             base_match = get_prefix_length(prompt_tokens, observation.base_prompt)
@@ -506,6 +508,7 @@ class KVPrefixCache:
                     if base_match < len(observation.base_prompt)
                     else "continuation-diverged"
                 )
+                unavailable_observation = observation
             if reusable > best_reusable:
                 best_reusable = reusable
                 best_base_match = base_match
@@ -514,12 +517,26 @@ class KVPrefixCache:
 
         if best is None:
             analysis_ms = (time.perf_counter() - start) * 1000
-            if unavailable_base_match > 0:
+            if unavailable_base_match > 0 and unavailable_observation is not None:
+                base_length = len(unavailable_observation.base_prompt)
+                base_window = _token_window(
+                    unavailable_observation.base_prompt,
+                    unavailable_base_match,
+                )
+                prompt_window = _token_window(
+                    prompt_tokens,
+                    unavailable_base_match,
+                )
                 logger.info(
                     "[INSTRUMENT] Decode cache promotion unavailable: "
                     f"base_match={unavailable_base_match}/{len(prompt_tokens)}, "
+                    f"base_length={base_length}, "
+                    f"base_remaining={max(0, base_length - unavailable_base_match)}, "
+                    f"prompt_remaining={len(prompt_tokens) - unavailable_base_match}, "
                     f"continuation_match={unavailable_continuation_match}, "
                     f"reason={unavailable_reason}, "
+                    f"base_window={base_window}, "
+                    f"prompt_window={prompt_window}, "
                     f"analysis_ms={analysis_ms:.3f}"
                 )
             return
@@ -1183,6 +1200,16 @@ def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
     equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
     prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
     return int(mx.sum(prefix_mask).item())
+
+
+def _token_window(
+    tokens: mx.array,
+    position: int,
+    radius: int = 4,
+) -> list[int]:
+    start = max(0, position - radius)
+    end = min(int(tokens.shape[0]), position + radius)
+    return [int(token) for token in tokens[start:end].tolist()]
 
 
 def get_available_memory() -> Memory:

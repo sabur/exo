@@ -574,8 +574,6 @@ class TestKVPrefix:
         )
 
         assert prefix_cache._snapshots[0] is not None
-        # With tail=4, the second update retains 4 tail snapshots
-        # instead of 3, producing an additional snapshot at 80999
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             8_192,
             18_432,
@@ -585,6 +583,44 @@ class TestKVPrefix:
             86_000,
             88_000,
             89_999,
+        ]
+
+    def test_v4_retains_fifth_tail_checkpoint_before_large_context_frontier(
+        self,
+    ):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(221_544, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=221_542, pool_rows=20)]
+        snapshots = [
+            CacheSnapshot(states=[], token_count=token_count)
+            for token_count in (
+                8_192,
+                16_384,
+                36_864,
+                77_824,
+                159_744,
+                208_896,
+                212_992,
+                217_088,
+                221_184,
+                221_542,
+            )
+        ]
+
+        prefix_cache.add_kv_cache(prompt, cache, snapshots)
+
+        assert prefix_cache._snapshots[0] is not None
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [
+            8_192,
+            16_384,
+            36_864,
+            77_824,
+            159_744,
+            208_896,
+            212_992,
+            217_088,
+            221_184,
+            221_542,
         ]
 
     def test_v4_persistence_can_be_disabled(self):
@@ -1008,8 +1044,13 @@ class TestKVPrefix:
         ]
         assert len(unavailable) == 1
         assert "base_match=8/11" in unavailable[0]
+        assert "base_length=10" in unavailable[0]
+        assert "base_remaining=2" in unavailable[0]
+        assert "prompt_remaining=3" in unavailable[0]
         assert "continuation_match=0" in unavailable[0]
         assert "reason=base-diverged" in unavailable[0]
+        assert "base_window=[4, 5, 6, 7, 8, 9]" in unavailable[0]
+        assert "prompt_window=[4, 5, 6, 7, 99, 100, 101]" in unavailable[0]
 
     def test_decode_observation_requires_full_continuation_match(self):
         prefix_cache = KVPrefixCache(None)
