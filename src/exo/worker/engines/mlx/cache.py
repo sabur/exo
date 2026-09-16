@@ -453,20 +453,10 @@ class KVPrefixCache:
             )
             return
 
-        final_snapshot = snapshot_ssm_states(completed_cache)
-        if final_snapshot.token_count != promoted_length:
-            logger.warning(
-                "Decode cache promotion skipped: "
-                f"source={source}, prompt={promoted_length}, "
-                f"snapshot={final_snapshot.token_count}, "
-                "reason=snapshot-length-mismatch"
-            )
-            return
-
         self.add_kv_cache(
             promoted_prompt,
             completed_cache,
-            [final_snapshot],
+            None,
             media_regions=media_regions,
             prefill_tps=prefill_tps,
             copy_cache=False,
@@ -852,14 +842,21 @@ class KVPrefixCache:
                 desired = (max_length - 1) if candidate_is_exact else validated_length
                 target = min(candidate_cached_length, desired)
 
-            restore_pos, restore_snap = self._get_snapshot(i, target)
+            if target == candidate_cached_length:
+                restore_pos, restore_snap = candidate_cached_length, None
+            else:
+                restore_pos, restore_snap = self._get_snapshot(i, target)
             snapshots = self._snapshots[i] or []
             snapshot_positions = [snapshot.token_count for snapshot in snapshots]
             snapshot_mib = sum(snapshot.nbytes for snapshot in snapshots) / (1 << 20)
             stored_cache_mib = sum(
                 _cache_state_nbytes(state) for state in candidate_cache
             ) / (1 << 20)
-            usable = restore_snap is not None or not candidate_has_ssm
+            usable = (
+                restore_pos == candidate_cached_length
+                or restore_snap is not None
+                or not candidate_has_ssm
+            )
             candidate_details.append(
                 f"{i}:tokens={len(cached_prompt)},raw={raw_length},"
                 f"validated={validated_length},restore={restore_pos},"

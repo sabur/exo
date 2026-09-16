@@ -999,10 +999,7 @@ class TestKVPrefix:
 
         assert [len(prompt) for prompt in prefix_cache.prompts] == [10, 13]
         assert prefix_cache.caches[1] is completed_cache
-        assert prefix_cache._snapshots[1] is not None
-        assert [snapshot.token_count for snapshot in prefix_cache._snapshots[1]] == [
-            13
-        ]
+        assert prefix_cache._snapshots[1] is None
         promoted = [
             call.args[0]
             for call in log_info.call_args_list
@@ -1018,6 +1015,21 @@ class TestKVPrefix:
         )
 
         assert matched_index == 1
+        assert len(remaining) == 1
+
+    def test_exact_v4_cache_is_restorable_without_duplicate_snapshot(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(13, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=13, pool_rows=4)]
+        prefix_cache.add_kv_cache(prompt, cache, None)
+
+        restored, remaining, matched_index, _ = prefix_cache.get_kv_cache(
+            MagicMock(),
+            mx.arange(14, dtype=mx.int32),
+        )
+
+        assert matched_index == 0
+        assert cache_length(restored) == 13
         assert len(remaining) == 1
 
     def test_decode_cache_promotion_falls_back_on_continuation_mismatch(self):
