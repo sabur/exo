@@ -64,7 +64,7 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
 )
 _V4_POST_DECODE_PROMOTION_ENABLED = (
-    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "true").lower()
+    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "false").lower()
     == "true"
 )
 
@@ -474,28 +474,62 @@ class KVPrefixCache:
     ) -> None:
         start = time.perf_counter()
         best_reusable = 0
+        best_base_match = 0
+        best_continuation_match = 0
+        unavailable_base_match = 0
+        unavailable_continuation_match = 0
+        unavailable_reason = "base-diverged"
         best: _DecodeObservation | None = None
         for observation in self._decode_observations:
             base_match = get_prefix_length(prompt_tokens, observation.base_prompt)
             if base_match < len(observation.base_prompt):
-                reusable = base_match
+                continuation_match = 0
+                reusable = 0
             else:
                 continuation_match = get_prefix_length(
                     prompt_tokens[len(observation.base_prompt) :],
                     observation.continuation,
                 )
-                reusable = len(observation.base_prompt) + continuation_match
+                reusable = (
+                    len(observation.base_prompt) + continuation_match
+                    if continuation_match == len(observation.continuation)
+                    else 0
+                )
+            if (base_match, continuation_match) > (
+                unavailable_base_match,
+                unavailable_continuation_match,
+            ):
+                unavailable_base_match = base_match
+                unavailable_continuation_match = continuation_match
+                unavailable_reason = (
+                    "base-diverged"
+                    if base_match < len(observation.base_prompt)
+                    else "continuation-diverged"
+                )
             if reusable > best_reusable:
                 best_reusable = reusable
+                best_base_match = base_match
+                best_continuation_match = continuation_match
                 best = observation
 
         if best is None:
+            analysis_ms = (time.perf_counter() - start) * 1000
+            if unavailable_base_match > 0:
+                logger.info(
+                    "[INSTRUMENT] Decode cache promotion unavailable: "
+                    f"base_match={unavailable_base_match}/{len(prompt_tokens)}, "
+                    f"continuation_match={unavailable_continuation_match}, "
+                    f"reason={unavailable_reason}, "
+                    f"analysis_ms={analysis_ms:.3f}"
+                )
             return
 
         analysis_ms = (time.perf_counter() - start) * 1000
         logger.info(
             "[INSTRUMENT] Decode cache promotion opportunity: "
             f"source={best.source}, reusable={best_reusable}/{len(prompt_tokens)}, "
+            f"base_match={best_base_match}, "
+            f"continuation_match={best_continuation_match}, "
             f"current_restore={current_restore}, "
             f"potential_saved={max(0, best_reusable - current_restore)}, "
             f"analysis_ms={analysis_ms:.3f}"

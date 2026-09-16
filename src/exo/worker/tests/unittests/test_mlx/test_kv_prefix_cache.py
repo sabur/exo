@@ -969,8 +969,84 @@ class TestKVPrefix:
         assert len(opportunities) == 1
         assert "source=uid=7" in opportunities[0]
         assert "reusable=13/14" in opportunities[0]
+        assert "base_match=10" in opportunities[0]
+        assert "continuation_match=3" in opportunities[0]
         assert "potential_saved=3" in opportunities[0]
         assert "analysis_ms=" in opportunities[0]
+
+    def test_decode_observation_does_not_claim_base_only_match_as_promotion(self):
+        prefix_cache = KVPrefixCache(None)
+        base_prompt = mx.arange(10, dtype=mx.int32)
+        prefix_cache.record_decode_observation(
+            base_prompt,
+            [8, 9, 10, 11, 12],
+            source="uid=7",
+        )
+        next_prompt = mx.concatenate(
+            [
+                mx.arange(8, dtype=mx.int32),
+                mx.array([99, 100, 101], dtype=mx.int32),
+            ]
+        )
+
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
+            prefix_cache._log_decode_promotion_opportunity(
+                next_prompt,
+                current_restore=6,
+            )
+
+        messages = [
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args
+        ]
+        assert not any("promotion opportunity" in message for message in messages)
+        unavailable = [
+            message
+            for message in messages
+            if "Decode cache promotion unavailable" in message
+        ]
+        assert len(unavailable) == 1
+        assert "base_match=8/11" in unavailable[0]
+        assert "continuation_match=0" in unavailable[0]
+        assert "reason=base-diverged" in unavailable[0]
+
+    def test_decode_observation_requires_full_continuation_match(self):
+        prefix_cache = KVPrefixCache(None)
+        base_prompt = mx.arange(10, dtype=mx.int32)
+        prefix_cache.record_decode_observation(
+            base_prompt,
+            [8, 9, 10, 11, 12],
+            source="uid=7",
+        )
+        next_prompt = mx.concatenate(
+            [
+                base_prompt,
+                mx.array([10, 11, 99], dtype=mx.int32),
+            ]
+        )
+
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
+            prefix_cache._log_decode_promotion_opportunity(
+                next_prompt,
+                current_restore=10,
+            )
+
+        messages = [
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args
+        ]
+        assert not any("promotion opportunity" in message for message in messages)
+        unavailable = [
+            message
+            for message in messages
+            if "Decode cache promotion unavailable" in message
+        ]
+        assert len(unavailable) == 1
+        assert "base_match=10/13" in unavailable[0]
+        assert "continuation_match=2" in unavailable[0]
+        assert "reason=continuation-diverged" in unavailable[0]
 
     def test_decode_cache_promotion_adds_exact_boundary_candidate(self):
         prefix_cache = KVPrefixCache(None)
