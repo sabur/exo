@@ -507,7 +507,9 @@ class KVPrefixCache:
             logger.info("DeepSeek V4 prefix cache persistence is disabled")
             return
 
+        store_start = time.perf_counter()
         stored_cache = deepcopy(cache)
+        store_ms = (time.perf_counter() - store_start) * 1000
         stored_snapshots = (
             _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
         )
@@ -544,7 +546,8 @@ class KVPrefixCache:
         logger.info(
             f"KV cache added (index {start_length}): "
             f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries, "
-            f"entry_id={self._instance_id}:{generation}"
+            f"entry_id={self._instance_id}:{generation}, "
+            f"store_ms={store_ms:.3f}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -585,7 +588,9 @@ class KVPrefixCache:
                 merged.extend(snapshots)
             stored_snapshots = merged or None
 
+        store_start = time.perf_counter()
         stored_cache = deepcopy(cache)
+        store_ms = (time.perf_counter() - store_start) * 1000
         stored_media_regions = media_regions or []
         access_counter = self._access_counter + 1
         self.prompts[index] = prompt_tokens
@@ -595,7 +600,11 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter = access_counter
         self._last_used[index] = access_counter
-        logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, entry_id={self._instance_id}:{self._entry_generations[index]}")
+        logger.info(
+            f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
+            f"entry_id={self._instance_id}:{self._entry_generations[index]}, "
+            f"store_ms={store_ms:.3f}"
+        )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
             self._log_total_v4_snapshot_retention()

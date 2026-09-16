@@ -1,4 +1,5 @@
 # type: ignore
+import logging
 import time
 from typing import cast
 from unittest.mock import MagicMock, call, patch
@@ -895,21 +896,42 @@ class TestKVPrefix:
         )
         assert prefix_cache._entry_generations == [1, 3]
 
-    def test_v4_generation_update_preserves_composite_id(self):
+    def test_v4_generation_update_preserves_composite_id(self, caplog):
         """update_kv_cache preserves the composite entry ID."""
         prefix_cache = KVPrefixCache(None)
 
         prompt = mx.arange(12, dtype=mx.int32)
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
-        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        with caplog.at_level(logging.INFO):
+            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        added = [
+            record.message
+            for record in caplog.records
+            if record.message.startswith("KV cache added")
+        ]
+        assert len(added) == 1
+        assert "store_ms=" in added[0]
 
         composite_before = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
 
         # Update the entry
+        caplog.clear()
         updated_prompt = mx.arange(24, dtype=mx.int32)
         updated_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-        prefix_cache.update_kv_cache(0, updated_prompt, updated_cache, [], restore_pos=12)
+        with caplog.at_level(logging.INFO):
+            prefix_cache.update_kv_cache(
+                0, updated_prompt, updated_cache, [], restore_pos=12
+            )
+
+        updated = [
+            record.message
+            for record in caplog.records
+            if record.message.startswith("KV cache updated")
+        ]
+        assert len(updated) == 1
+        assert "store_ms=" in updated[0]
 
         composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
