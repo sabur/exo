@@ -322,6 +322,8 @@ exo supports several environment variables for configuration:
 | `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
 | `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+| `EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained DeepSeek V4 prefix-cache entries. Set to `0` to disable persistence. | `4` |
+| `EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION` | Experimentally retain completed DeepSeek V4 decode state as an exact-prefix candidate while preserving the pre-decode fallback. Requires at least two V4 cache entries. | `false` |
 
 **Example usage:**
 

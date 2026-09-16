@@ -475,14 +475,25 @@ class ExoBatchGenerator:
                     list[int] | None,
                     getattr(response, "all_tokens", None),
                 )
+                completed_cache = cast(
+                    KVCacheType | None,
+                    getattr(response, "prompt_cache", None),
+                )
                 if (
                     self.kv_prefix_cache is not None
                     and generated_sequence is not None
+                    and (
+                        not state.task_params.bench
+                        or state.task_params.use_prefix_cache
+                    )
                 ):
                     self.kv_prefix_cache.record_decode_observation(
                         state.all_prompt_tokens,
                         generated_sequence,
                         source=f"uid={response.uid}",
+                        completed_cache=completed_cache,
+                        media_regions=state.media_regions,
+                        prefill_tps=state.prefill_tps,
                     )
                 del self._active_tasks[response.uid]
             elif (

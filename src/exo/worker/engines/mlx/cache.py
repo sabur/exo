@@ -63,6 +63,10 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
 )
+_V4_POST_DECODE_PROMOTION_ENABLED = (
+    os.environ.get("EXO_DEEPSEEK_V4_POST_DECODE_PROMOTION", "false").lower()
+    == "true"
+)
 
 # Retain fixed logarithmic anchors plus the three tail-safe rollback points and
 # exact pre-generation state. The anchor count grows only logarithmically.
@@ -372,6 +376,9 @@ class KVPrefixCache:
         base_prompt: mx.array,
         generated_sequence: list[int],
         source: str,
+        completed_cache: KVCacheType | None = None,
+        media_regions: list["MediaRegion"] | None = None,
+        prefill_tps: float = 0.0,
     ) -> None:
         if not generated_sequence:
             return
@@ -400,6 +407,73 @@ class KVPrefixCache:
             "[INSTRUMENT] Decode cache observation recorded: "
             f"source={source}, base={len(base_prompt)}, "
             f"sequence={len(generated_sequence)}, overlap={overlap}, "
+            f"continuation={len(continuation)}"
+        )
+        if completed_cache is not None and len(continuation) > 0:
+            try:
+                self._promote_decode_cache(
+                    base_prompt,
+                    continuation,
+                    completed_cache,
+                    source,
+                    media_regions,
+                    prefill_tps,
+                )
+            except Exception:
+                logger.warning("Failed to promote decode cache", exc_info=True)
+
+    def _promote_decode_cache(
+        self,
+        base_prompt: mx.array,
+        continuation: mx.array,
+        completed_cache: KVCacheType,
+        source: str,
+        media_regions: list["MediaRegion"] | None,
+        prefill_tps: float,
+    ) -> None:
+        if not _V4_POST_DECODE_PROMOTION_ENABLED:
+            return
+        if _V4_PREFIX_CACHE_MAX_ENTRIES < 2:
+            logger.warning(
+                "Decode cache promotion skipped: "
+                "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES must be at least 2"
+            )
+            return
+        if not has_deepseek_v4_cache(completed_cache):
+            return
+
+        promoted_prompt = mx.concatenate([base_prompt, continuation])
+        promoted_length = len(promoted_prompt)
+        completed_length = cache_length(completed_cache)
+        if completed_length != promoted_length:
+            logger.warning(
+                "Decode cache promotion skipped: "
+                f"source={source}, prompt={promoted_length}, "
+                f"cache={completed_length}, reason=length-mismatch"
+            )
+            return
+
+        final_snapshot = snapshot_ssm_states(completed_cache)
+        if final_snapshot.token_count != promoted_length:
+            logger.warning(
+                "Decode cache promotion skipped: "
+                f"source={source}, prompt={promoted_length}, "
+                f"snapshot={final_snapshot.token_count}, "
+                "reason=snapshot-length-mismatch"
+            )
+            return
+
+        self.add_kv_cache(
+            promoted_prompt,
+            completed_cache,
+            [final_snapshot],
+            media_regions=media_regions,
+            prefill_tps=prefill_tps,
+            copy_cache=False,
+        )
+        logger.info(
+            "Decode cache promoted: "
+            f"source={source}, tokens={promoted_length}, "
             f"continuation={len(continuation)}"
         )
 
@@ -581,6 +655,8 @@ class KVPrefixCache:
         ssm_snapshots: list[CacheSnapshot] | None = None,
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
+        *,
+        copy_cache: bool = True,
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         is_v4 = has_deepseek_v4_cache(cache)
@@ -589,7 +665,7 @@ class KVPrefixCache:
             return
 
         store_start = time.perf_counter()
-        stored_cache = deepcopy(cache)
+        stored_cache = deepcopy(cache) if copy_cache else cache
         store_ms = (time.perf_counter() - store_start) * 1000
         stored_snapshots = (
             _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
