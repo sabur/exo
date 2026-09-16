@@ -471,6 +471,19 @@ class ExoBatchGenerator:
             )
 
             if is_done:
+                generated_sequence = cast(
+                    list[int] | None,
+                    getattr(response, "all_tokens", None),
+                )
+                if (
+                    self.kv_prefix_cache is not None
+                    and generated_sequence is not None
+                ):
+                    self.kv_prefix_cache.record_decode_observation(
+                        state.all_prompt_tokens,
+                        generated_sequence,
+                        source=f"uid={response.uid}",
+                    )
                 del self._active_tasks[response.uid]
             elif (
                 max_stop_len > 0

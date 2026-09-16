@@ -3,7 +3,8 @@ import os
 import time
 import uuid
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import numpy as np
@@ -67,6 +68,7 @@ _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
 # exact pre-generation state. The anchor count grows only logarithmically.
 _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
 _V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 4
+_DECODE_OBSERVATION_LIMIT = 4
 
 
 class CacheSnapshot:
@@ -85,6 +87,13 @@ class CacheSnapshot:
     @property
     def nbytes(self) -> int:
         return sum(_cache_state_nbytes(state) for state in self.states)
+
+
+@dataclass
+class _DecodeObservation:
+    base_prompt: mx.array
+    continuation: mx.array
+    source: str
 
 
 def _cache_state_nbytes(state: object | None) -> int:
@@ -337,6 +346,7 @@ class KVPrefixCache:
         self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
         self._next_generation: int = 1
         self._group = group
+        self._decode_observations: list[_DecodeObservation] = []
         
         # Structured cache separation: semantic boundaries
         # Each segment is cached independently with a hash for change detection
@@ -351,10 +361,81 @@ class KVPrefixCache:
         self._media_regions.clear()
         self._last_used.clear()
         self._entry_generations.clear()
+        self._decode_observations.clear()
         # Do NOT reset _next_generation — generation IDs are monotonic for the object lifetime
         # Do NOT reset _instance_id — it is the immutable cache-instance namespace
         self.prefill_tps.clear()
         # Keep segmented caches - they persist across turns unless invalidated
+
+    def record_decode_observation(
+        self,
+        base_prompt: mx.array,
+        generated_sequence: list[int],
+        source: str,
+    ) -> None:
+        if not generated_sequence:
+            return
+
+        max_overlap = min(32, len(base_prompt), len(generated_sequence))
+        base_tail = cast(list[int], base_prompt[-max_overlap:].tolist())
+        overlap = 0
+        for candidate in range(max_overlap, 0, -1):
+            if base_tail[-candidate:] == generated_sequence[:candidate]:
+                overlap = candidate
+                break
+
+        continuation = mx.array(
+            generated_sequence[overlap:],
+            dtype=base_prompt.dtype,
+        )
+        self._decode_observations.append(
+            _DecodeObservation(
+                base_prompt=base_prompt,
+                continuation=continuation,
+                source=source,
+            )
+        )
+        del self._decode_observations[:-_DECODE_OBSERVATION_LIMIT]
+        logger.info(
+            "[INSTRUMENT] Decode cache observation recorded: "
+            f"source={source}, base={len(base_prompt)}, "
+            f"sequence={len(generated_sequence)}, overlap={overlap}, "
+            f"continuation={len(continuation)}"
+        )
+
+    def _log_decode_promotion_opportunity(
+        self,
+        prompt_tokens: mx.array,
+        current_restore: int,
+    ) -> None:
+        start = time.perf_counter()
+        best_reusable = 0
+        best: _DecodeObservation | None = None
+        for observation in self._decode_observations:
+            base_match = get_prefix_length(prompt_tokens, observation.base_prompt)
+            if base_match < len(observation.base_prompt):
+                reusable = base_match
+            else:
+                continuation_match = get_prefix_length(
+                    prompt_tokens[len(observation.base_prompt) :],
+                    observation.continuation,
+                )
+                reusable = len(observation.base_prompt) + continuation_match
+            if reusable > best_reusable:
+                best_reusable = reusable
+                best = observation
+
+        if best is None:
+            return
+
+        analysis_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "[INSTRUMENT] Decode cache promotion opportunity: "
+            f"source={best.source}, reusable={best_reusable}/{len(prompt_tokens)}, "
+            f"current_restore={current_restore}, "
+            f"potential_saved={max(0, best_reusable - current_restore)}, "
+            f"analysis_ms={analysis_ms:.3f}"
+        )
 
     def set_segment_cache(
         self,
@@ -746,6 +827,7 @@ class KVPrefixCache:
                     "KV cache miss: no restorable token prefix across "
                     f"{len(self.prompts)} entries, selection_ms={selection_ms:.3f}"
                 )
+            self._log_decode_promotion_opportunity(prompt_tokens, 0)
             return make_kv_cache(model), prompt_tokens, None, False
 
         selection_ms = (time.perf_counter() - selection_start) * 1000
@@ -785,6 +867,7 @@ class KVPrefixCache:
             f"ordinal={_ordinal}, selection_ms={selection_ms:.3f}, "
             f"materialize_ms={materialize_ms:.3f}"
         )
+        self._log_decode_promotion_opportunity(prompt_tokens, best_restore_pos)
 
         self._access_counter += 1
         self._last_used[best_index] = self._access_counter

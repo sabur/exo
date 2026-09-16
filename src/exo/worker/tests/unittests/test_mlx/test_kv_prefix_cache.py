@@ -936,6 +936,45 @@ class TestKVPrefix:
         composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
 
+    def test_decode_observation_logs_potential_saved_tokens(self, caplog):
+        prefix_cache = KVPrefixCache(None)
+        base_prompt = mx.arange(10, dtype=mx.int32)
+
+        with caplog.at_level(logging.INFO):
+            prefix_cache.record_decode_observation(
+                base_prompt,
+                [8, 9, 10, 11, 12],
+                source="uid=7",
+            )
+
+        recorded = [
+            record.message
+            for record in caplog.records
+            if "Decode cache observation recorded" in record.message
+        ]
+        assert len(recorded) == 1
+        assert "overlap=2" in recorded[0]
+        assert "continuation=3" in recorded[0]
+
+        caplog.clear()
+        next_prompt = mx.arange(14, dtype=mx.int32)
+        with caplog.at_level(logging.INFO):
+            prefix_cache._log_decode_promotion_opportunity(
+                next_prompt,
+                current_restore=10,
+            )
+
+        opportunities = [
+            record.message
+            for record in caplog.records
+            if "Decode cache promotion opportunity" in record.message
+        ]
+        assert len(opportunities) == 1
+        assert "source=uid=7" in opportunities[0]
+        assert "reusable=13/14" in opportunities[0]
+        assert "potential_saved=3" in opportunities[0]
+        assert "analysis_ms=" in opportunities[0]
+
     def test_v4_generation_index_shift_preserves_ids(self):
         """Generation IDs survive eviction-induced index shifts."""
         prefix_cache = KVPrefixCache(None)
