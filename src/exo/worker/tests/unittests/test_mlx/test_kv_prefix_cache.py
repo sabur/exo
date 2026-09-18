@@ -122,6 +122,7 @@ class TestKVPrefix:
         cache = KVPrefixCache(None)
         assert len(cache.prompts) == 0
         assert len(cache.caches) == 0
+        assert len(cache._entry_telemetry) == 0
 
     def test_clear_empties_cache(self, mock_tokenizer):
         cache = KVPrefixCache(None)
@@ -130,6 +131,7 @@ class TestKVPrefix:
         cache.clear()
         assert len(cache.prompts) == 0
         assert len(cache.caches) == 0
+        assert len(cache._entry_telemetry) == 0
 
     def test_clear_on_empty_cache(self, mock_tokenizer):
         cache = KVPrefixCache(None)
@@ -657,6 +659,7 @@ class TestKVPrefix:
             len(prefix_cache._snapshots),
             len(prefix_cache._media_regions),
             len(prefix_cache._last_used),
+            len(prefix_cache._entry_telemetry),
             len(prefix_cache.prefill_tps),
         }
         assert lengths == {0}
@@ -898,6 +901,7 @@ class TestKVPrefix:
         assert len(prefix_cache._snapshots) == original_len
         assert len(prefix_cache._media_regions) == original_len
         assert len(prefix_cache._last_used) == original_len
+        assert len(prefix_cache._entry_telemetry) == original_len
         assert len(prefix_cache.prefill_tps) == original_len
         assert prefix_cache._entry_generations == [1]
 
@@ -950,6 +954,7 @@ class TestKVPrefix:
         assert "store_ms=" in added[0]
 
         composite_before = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        telemetry_before = prefix_cache._entry_telemetry[0]
 
         # Update the entry
         updated_prompt = mx.arange(24, dtype=mx.int32)
@@ -969,6 +974,136 @@ class TestKVPrefix:
 
         composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
         assert composite_after == composite_before
+        assert prefix_cache._entry_telemetry[0] is telemetry_before
+        assert prefix_cache._entry_telemetry[0].update_count == 1
+
+    def test_v4_add_initializes_entry_telemetry(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+
+        assert len(prefix_cache._entry_telemetry) == 1
+        telemetry = prefix_cache._entry_telemetry[0]
+        assert telemetry.created_access == prefix_cache._last_used[0]
+        assert telemetry.last_selected_access is None
+        assert telemetry.update_count == 0
+        assert telemetry.selection_count == 0
+        assert telemetry.restore_count == 0
+        assert telemetry.cumulative_restored_tokens == 0
+        assert telemetry.snapshot_restore_counts == {}
+
+    def test_v4_successful_selection_records_entry_and_snapshot_telemetry(self):
+        prompt = mx.arange(120, dtype=mx.int32)
+        query = mx.concatenate(
+            [
+                prompt[:95],
+                mx.array([10_000, 10_001], dtype=mx.int32),
+            ]
+        )
+        prefix_cache = KVPrefixCache(None)
+        cache = [_make_v4_cache(offset=119, pool_rows=30)]
+        snapshots = [
+            CacheSnapshot(
+                states=[_make_v4_cache(offset=50, pool_rows=12)],
+                token_count=50,
+            ),
+            CacheSnapshot(
+                states=[_make_v4_cache(offset=80, pool_rows=20)],
+                token_count=80,
+            ),
+            CacheSnapshot(
+                states=[_make_v4_cache(offset=119, pool_rows=30)],
+                token_count=119,
+            ),
+        ]
+        prefix_cache.add_kv_cache(prompt, cache, snapshots)
+
+        prefix_cache.get_kv_cache(MagicMock(), query)
+
+        telemetry = prefix_cache._entry_telemetry[0]
+        assert telemetry.last_selected_access == prefix_cache._last_used[0]
+        assert telemetry.selection_count == 1
+        assert telemetry.restore_count == 1
+        assert telemetry.exact_selection_count == 0
+        assert telemetry.cumulative_raw_match_tokens == 95
+        assert telemetry.cumulative_validated_match_tokens == 95
+        assert telemetry.cumulative_restored_tokens == 80
+        assert telemetry.max_restored_tokens == 80
+        assert telemetry.snapshot_restore_counts == {80: 1}
+
+    def test_v4_unusable_candidate_does_not_record_selection_telemetry(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [cached_prompt[:12], mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        prefix_cache = KVPrefixCache(None)
+        cache = [_make_v4_cache(offset=98, pool_rows=24)]
+        prefix_cache.add_kv_cache(
+            cached_prompt,
+            cache,
+            [
+                CacheSnapshot(
+                    states=[_make_v4_cache(offset=98, pool_rows=24)],
+                    token_count=98,
+                )
+            ],
+        )
+        model = MagicMock(spec=[])
+        model.layers = []
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            model, query
+        )
+
+        assert restored == []
+        assert mx.array_equal(remaining, query)
+        assert matched_index is None
+        assert not is_exact
+        telemetry = prefix_cache._entry_telemetry[0]
+        assert telemetry.selection_count == 0
+        assert telemetry.restore_count == 0
+        assert telemetry.cumulative_restored_tokens == 0
+        assert telemetry.snapshot_restore_counts == {}
+
+    def test_v4_eviction_logs_and_removes_entry_telemetry(self):
+        prefix_cache = KVPrefixCache(None)
+        first_prompt = mx.arange(12, dtype=mx.int32)
+        first_cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        first_snapshot = CacheSnapshot(states=first_cache, token_count=12)
+        prefix_cache.add_kv_cache(
+            first_prompt,
+            first_cache,
+            [first_snapshot],
+        )
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES",
+                1,
+            ),
+            patch("exo.worker.engines.mlx.cache.logger.info") as log_info,
+        ):
+            second_prompt = mx.arange(24, dtype=mx.int32)
+            second_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+            prefix_cache.add_kv_cache(
+                second_prompt,
+                second_cache,
+                [CacheSnapshot(states=second_cache, token_count=24)],
+            )
+
+        assert len(prefix_cache._entry_telemetry) == 1
+        evicted = [
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache evicted")
+        ]
+        assert len(evicted) == 1
+        assert "telemetry={age=" in evicted[0]
+        assert "selections=0" in evicted[0]
+        assert "snapshot_restores=[]" in evicted[0]
 
     def test_prompt_observation_logs_alignment_boundary(self):
         prefix_cache = KVPrefixCache(None)

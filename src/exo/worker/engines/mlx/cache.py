@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
@@ -94,6 +94,46 @@ class CacheSnapshot:
 class _PromptObservation:
     base_prompt: mx.array
     source: str
+
+
+@dataclass
+class _CacheEntryTelemetry:
+    created_access: int
+    last_selected_access: int | None = None
+    update_count: int = 0
+    selection_count: int = 0
+    restore_count: int = 0
+    exact_selection_count: int = 0
+    cumulative_raw_match_tokens: int = 0
+    cumulative_validated_match_tokens: int = 0
+    cumulative_restored_tokens: int = 0
+    max_restored_tokens: int = 0
+    snapshot_restore_counts: dict[int, int] = field(default_factory=dict)
+
+    def record_update(self) -> None:
+        self.update_count += 1
+
+    def record_selection(
+        self,
+        access_counter: int,
+        raw_match_tokens: int,
+        validated_match_tokens: int,
+        restored_tokens: int,
+        is_exact: bool,
+        snapshot_token_count: int | None,
+    ) -> None:
+        self.last_selected_access = access_counter
+        self.selection_count += 1
+        self.restore_count += int(restored_tokens > 0)
+        self.exact_selection_count += int(is_exact)
+        self.cumulative_raw_match_tokens += raw_match_tokens
+        self.cumulative_validated_match_tokens += validated_match_tokens
+        self.cumulative_restored_tokens += restored_tokens
+        self.max_restored_tokens = max(self.max_restored_tokens, restored_tokens)
+        if snapshot_token_count is not None:
+            self.snapshot_restore_counts[snapshot_token_count] = (
+                self.snapshot_restore_counts.get(snapshot_token_count, 0) + 1
+            )
 
 
 def _cache_state_nbytes(state: object | None) -> int:
@@ -340,6 +380,7 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self._entry_telemetry: list[_CacheEntryTelemetry] = []
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._instance_id: str = uuid.uuid4().hex  # immutable cache-instance namespace
@@ -360,6 +401,7 @@ class KVPrefixCache:
         self._snapshots.clear()
         self._media_regions.clear()
         self._last_used.clear()
+        self._entry_telemetry.clear()
         self._entry_generations.clear()
         self._prompt_observations.clear()
         # Do NOT reset _next_generation — generation IDs are monotonic for the object lifetime
@@ -595,6 +637,9 @@ class KVPrefixCache:
             self._media_regions.append(media_regions or [])
             self.prefill_tps.append(prefill_tps)
             self._last_used.append(access_counter)
+            self._entry_telemetry.append(
+                _CacheEntryTelemetry(created_access=access_counter)
+            )
             self._entry_generations.append(generation)
         except Exception:
             for collection in (
@@ -604,6 +649,7 @@ class KVPrefixCache:
                 self._media_regions,
                 self.prefill_tps,
                 self._last_used,
+                self._entry_telemetry,
                 self._entry_generations,
             ):
                 del collection[start_length:]
@@ -614,7 +660,8 @@ class KVPrefixCache:
             f"KV cache added (index {start_length}): "
             f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries, "
             f"entry_id={self._instance_id}:{generation}, "
-            f"store_ms={store_ms:.3f}"
+            f"store_ms={store_ms:.3f}, "
+            f"telemetry={self._telemetry_summary(start_length)}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -667,10 +714,12 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter = access_counter
         self._last_used[index] = access_counter
+        self._telemetry_for_index(index).record_update()
         logger.info(
             f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
             f"entry_id={self._instance_id}:{self._entry_generations[index]}, "
-            f"store_ms={store_ms:.3f}"
+            f"store_ms={store_ms:.3f}, "
+            f"telemetry={self._telemetry_summary(index)}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -779,6 +828,7 @@ class KVPrefixCache:
                 f"snapshots={snapshot_positions},"
                 f"snapshot_bytes={snapshot_mib:.1f}MiB,"
                 f"entry_id={self._instance_id}:{self._entry_generations[i]},"
+                f"telemetry={self._telemetry_summary(i)},"
                 f"usable={usable}"
             )
             if not usable:
@@ -844,6 +894,22 @@ class KVPrefixCache:
                     c.offset = best_restore_pos
         materialize_ms = (time.perf_counter() - materialize_start) * 1000
 
+        self._access_counter += 1
+        self._last_used[best_index] = self._access_counter
+        telemetry = self._telemetry_for_index(best_index)
+        telemetry.record_selection(
+            access_counter=self._access_counter,
+            raw_match_tokens=best_raw_length,
+            validated_match_tokens=best_length,
+            restored_tokens=best_restore_pos,
+            is_exact=best_is_exact,
+            snapshot_token_count=(
+                best_restore_snap.token_count
+                if best_restore_snap is not None
+                else None
+            ),
+        )
+
         logger.info(
             "KV cache selected: "
             f"entry={best_index}, raw={best_raw_length}/{max_length}, "
@@ -851,12 +917,11 @@ class KVPrefixCache:
             f"cached={best_cached_length}, exact={best_is_exact}, "
             f"entry_id={self._instance_id}:{self._entry_generations[best_index]}, "
             f"ordinal={_ordinal}, selection_ms={selection_ms:.3f}, "
-            f"materialize_ms={materialize_ms:.3f}"
+            f"materialize_ms={materialize_ms:.3f}, "
+            f"telemetry={self._telemetry_summary(best_index)}"
         )
         self._log_prompt_alignment(prompt_tokens, best_restore_pos)
 
-        self._access_counter += 1
-        self._last_used[best_index] = self._access_counter
         remaining = prompt_tokens[best_restore_pos:]
 
         return prompt_cache, remaining, best_index, best_is_exact
@@ -935,17 +1000,75 @@ class KVPrefixCache:
 
     def _evict_entry(self, index: int, reason: str) -> None:
         evicted_tokens = len(self.prompts[index])
+        evicted_cache_tokens = cache_length(self.caches[index])
+        evicted_cache_mib = sum(
+            _cache_state_nbytes(state) for state in self.caches[index]
+        ) / (1 << 20)
+        evicted_snapshots = self._snapshots[index] or []
+        evicted_snapshot_positions = [
+            snapshot.token_count for snapshot in evicted_snapshots
+        ]
+        evicted_snapshot_mib = sum(
+            snapshot.nbytes for snapshot in evicted_snapshots
+        ) / (1 << 20)
+        evicted_prefill_tps = self.prefill_tps[index]
         evicted_gen = self._entry_generations[index]
+        telemetry_summary = self._telemetry_summary(index)
         self.prompts.pop(index)
         self.caches.pop(index)
         self._snapshots.pop(index)
         self._media_regions.pop(index)
         self._last_used.pop(index)
+        self._entry_telemetry.pop(index)
         self._entry_generations.pop(index)
         self.prefill_tps.pop(index)
         logger.info(
             f"KV cache evicted LRU entry index {index} "
-            f"({evicted_tokens} tokens, entry_id={self._instance_id}:{evicted_gen}): {reason}"
+            f"({evicted_tokens} tokens, entry_id={self._instance_id}:{evicted_gen}, "
+            f"cached={evicted_cache_tokens}, cache={evicted_cache_mib:.1f}MiB, "
+            f"snapshots={evicted_snapshot_positions}, "
+            f"snapshot_bytes={evicted_snapshot_mib:.1f}MiB, "
+            f"prefill_tps={evicted_prefill_tps:.1f}, "
+            f"telemetry={telemetry_summary}): {reason}"
+        )
+
+    def _telemetry_for_index(self, index: int) -> _CacheEntryTelemetry:
+        while len(self._entry_telemetry) <= index:
+            created_access = (
+                self._last_used[len(self._entry_telemetry)]
+                if len(self._last_used) > len(self._entry_telemetry)
+                else self._access_counter
+            )
+            self._entry_telemetry.append(
+                _CacheEntryTelemetry(created_access=created_access)
+            )
+        return self._entry_telemetry[index]
+
+    def _telemetry_summary(self, index: int) -> str:
+        telemetry = self._telemetry_for_index(index)
+        age = max(0, self._access_counter - telemetry.created_access)
+        since_selection = (
+            "never"
+            if telemetry.last_selected_access is None
+            else str(
+                max(0, self._access_counter - telemetry.last_selected_access)
+            )
+        )
+        snapshot_restores = sorted(telemetry.snapshot_restore_counts.items())
+        return (
+            "{"
+            f"age={age},"
+            f"since_selection={since_selection},"
+            f"updates={telemetry.update_count},"
+            f"selections={telemetry.selection_count},"
+            f"restores={telemetry.restore_count},"
+            f"exact={telemetry.exact_selection_count},"
+            f"raw_total={telemetry.cumulative_raw_match_tokens},"
+            f"validated_total={telemetry.cumulative_validated_match_tokens},"
+            f"restored_total={telemetry.cumulative_restored_tokens},"
+            f"restored_max={telemetry.max_restored_tokens},"
+            f"snapshot_restores={snapshot_restores}"
+            "}"
         )
 
     def _log_total_v4_snapshot_retention(self) -> None:
