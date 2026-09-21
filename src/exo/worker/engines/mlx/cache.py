@@ -61,7 +61,7 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
 
 
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
-    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 4
+    "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 3
 )
 
 # Retain fixed logarithmic anchors plus four tail-safe rollback points and the
@@ -678,6 +678,11 @@ class KVPrefixCache:
         prefill_tps: float = 0.0,
     ):
         """Update an existing cache entry in-place."""
+        old_prompt = self.prompts[index]
+        old_generation = self._entry_generations[index]
+        old_telemetry_summary = self._telemetry_summary(index)
+        common_prefix_length = get_prefix_length(old_prompt, prompt_tokens)
+        continues_existing_lineage = common_prefix_length >= len(old_prompt)
         old_snapshots = self._snapshots[index]
         is_v4 = has_deepseek_v4_cache(cache)
         if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
@@ -714,7 +719,24 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter = access_counter
         self._last_used[index] = access_counter
-        self._telemetry_for_index(index).record_update()
+        if continues_existing_lineage:
+            self._telemetry_for_index(index).record_update()
+        else:
+            generation = self._next_generation
+            self._next_generation += 1
+            self._entry_generations[index] = generation
+            self._entry_telemetry[index] = _CacheEntryTelemetry(
+                created_access=access_counter
+            )
+            logger.info(
+                "KV cache lineage replaced "
+                f"(index {index}, "
+                f"old_entry_id={self._instance_id}:{old_generation}, "
+                f"new_entry_id={self._instance_id}:{generation}, "
+                f"common_prefix={common_prefix_length}/{len(old_prompt)}, "
+                f"new_tokens={len(prompt_tokens)}, "
+                f"old_telemetry={old_telemetry_summary})"
+            )
         logger.info(
             f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
             f"entry_id={self._instance_id}:{self._entry_generations[index]}, "

@@ -977,6 +977,55 @@ class TestKVPrefix:
         assert prefix_cache._entry_telemetry[0] is telemetry_before
         assert prefix_cache._entry_telemetry[0].update_count == 1
 
+    def test_v4_divergent_update_resets_entry_identity_and_telemetry(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(12, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        snapshot = CacheSnapshot(states=cache, token_count=12)
+        prefix_cache.add_kv_cache(prompt, cache, [snapshot])
+        telemetry_before = prefix_cache._entry_telemetry[0]
+        telemetry_before.selection_count = 4
+        telemetry_before.restore_count = 3
+        telemetry_before.cumulative_restored_tokens = 30
+        generation_before = prefix_cache._entry_generations[0]
+
+        compacted_prompt = mx.concatenate(
+            [
+                prompt[:8],
+                mx.array([100, 101, 102, 103], dtype=mx.int32),
+            ]
+        )
+        compacted_cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
+            prefix_cache.update_kv_cache(
+                0,
+                compacted_prompt,
+                compacted_cache,
+                [],
+                restore_pos=8,
+            )
+
+        telemetry_after = prefix_cache._entry_telemetry[0]
+        assert telemetry_after is not telemetry_before
+        assert telemetry_after.created_access == prefix_cache._last_used[0]
+        assert telemetry_after.update_count == 0
+        assert telemetry_after.selection_count == 0
+        assert telemetry_after.restore_count == 0
+        assert telemetry_after.cumulative_restored_tokens == 0
+        assert prefix_cache._entry_generations[0] != generation_before
+        replaced = [
+            call.args[0]
+            for call in log_info.call_args_list
+            if call.args and call.args[0].startswith("KV cache lineage replaced")
+        ]
+        assert len(replaced) == 1
+        assert (
+            f"old_entry_id={prefix_cache._instance_id}:{generation_before}"
+            in replaced[0]
+        )
+        assert "common_prefix=8/12" in replaced[0]
+        assert "selections=4" in replaced[0]
+
     def test_v4_add_initializes_entry_telemetry(self):
         prefix_cache = KVPrefixCache(None)
         prompt = mx.arange(12, dtype=mx.int32)
@@ -1668,78 +1717,13 @@ class TestKVPrefixCacheWithModel:
         assert get_prefix_length(kv_prefix_cache.prompts[0], tokens) == len(tokens)
 
 
-class TestExperimentalBCapFour:
-    """Tests for the experimental-B cap 3 -> 4 change."""
+class TestV4CacheTelemetry:
+    """Tests for the DeepSeek V4 cache cap and telemetry."""
 
-    def test_v4_default_cap_is_four(self):
-        """The experimental-B cap default is 4, not 3."""
+    def test_v4_default_cap_is_three(self):
         from exo.worker.engines.mlx.cache import _V4_PREFIX_CACHE_MAX_ENTRIES
 
-        assert _V4_PREFIX_CACHE_MAX_ENTRIES == 4
-
-    def test_v4_four_slot_lru_evicts_transient_retains_durables(self):
-        """Three durable entries survive after adding 4+ entries and touching durables.
-
-        Each durable is touched with a query one token longer than the cached prompt
-        so the V4 snapshot-based selection produces a usable candidate and refreshes
-        _last_used. The transient (index 3, 48 tokens) is never touched, so it becomes
-        the LRU and gets evicted when the next entry arrives.
-        """
-        prefix_cache = KVPrefixCache(None)
-
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 4
-        ):
-            # Add four entries: indices 0,1,2 = durable, index 3 = transient
-            for token_count in range(12, 60, 12):
-                prompt = mx.arange(token_count, dtype=mx.int32)
-                cache = [
-                    _make_v4_cache(offset=token_count, pool_rows=token_count // 4)
-                ]
-                snapshot = CacheSnapshot(states=cache, token_count=token_count)
-                prefix_cache.add_kv_cache(prompt, cache, [snapshot])
-
-            assert len(prefix_cache.prompts) == 4
-
-            # Record the transient prompt and generation for later assertion
-            transient_prompt = prefix_cache.prompts[3]
-            transient_gen = prefix_cache._entry_generations[3]
-
-            # Touch the three durable entries with a query one token longer
-            # that shares the full cached prompt. This makes target == cached
-            # snapshot length, producing a usable restore point and refreshing
-            # _last_used.
-            for i in range(3):
-                query = mx.concatenate([
-                    prefix_cache.prompts[i],
-                    mx.array([10_000 + i], dtype=mx.int32),
-                ])
-                _, _, matched_index, _ = prefix_cache.get_kv_cache(
-                    MagicMock(), query
-                )
-                assert matched_index == i, f"Durable {i} was not selected"
-
-            # Add a new entry -- should evict the old transient (index 3)
-            # which now has the smallest _last_used since it was never touched.
-            prompt = mx.arange(60, dtype=mx.int32)
-            cache = [_make_v4_cache(offset=60, pool_rows=15)]
-            snapshot = CacheSnapshot(states=cache, token_count=60)
-            prefix_cache.add_kv_cache(prompt, cache, [snapshot])
-
-        assert len(prefix_cache.prompts) == 4
-
-        # The three durable prompts (12, 24, 36 tokens) should remain
-        # plus the new entry (60 tokens). The old transient (48 tokens)
-        # should have been evicted.
-        prompt_lengths = sorted([len(p) for p in prefix_cache.prompts])
-        assert prompt_lengths == [12, 24, 36, 60]
-
-        # Assert the evicted entry was specifically the old transient
-        # Use identity checks (not mx.array equality) to avoid MLX broadcasting
-        assert all(
-            prompt is not transient_prompt for prompt in prefix_cache.prompts
-        )
-        assert transient_gen not in prefix_cache._entry_generations
+        assert _V4_PREFIX_CACHE_MAX_ENTRIES == 3
 
     def test_v4_selected_log_contains_entry_id_and_ordinal(self):
         """The KV cache selected log line includes entry_id and ordinal.

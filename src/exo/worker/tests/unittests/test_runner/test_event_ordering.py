@@ -137,7 +137,7 @@ def patch_out_mlx(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_batch_generator, "mx_any", make_nothin(False))
 
     def fake_all_gather(
-        tasks: list[TextGeneration], group: object
+        tasks: list[TextGeneration], group: object, **_: object
     ) -> tuple[list[TextGeneration], list[TextGeneration]]:
         return (tasks, [])
 

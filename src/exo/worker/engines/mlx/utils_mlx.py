@@ -889,7 +889,40 @@ def _parse_kimi_tool_calls(text: str):
 def mx_all_gather_tasks(
     tasks: list[TextGeneration],
     group: mx.distributed.Group | None,
+    *,
+    operation: str = "tasks",
+    phase: str = "unspecified",
+    generation_token_count: int | None = None,
 ) -> tuple[list[TextGeneration], list[TextGeneration]]:
+    rank = 0 if group is None else group.rank()
+    world_size: int = 1 if group is None else group.size()
+
+    def log_collective(
+        event: str,
+        collective: str,
+        started_at: float | None = None,
+        **details: int,
+    ) -> None:
+        if group is None:
+            return
+        bytes_per_mib = 1024 * 1024
+        duration = (
+            ""
+            if started_at is None
+            else f", duration_ms={(time.perf_counter() - started_at) * 1000:.3f}"
+        )
+        detail_text = "".join(f", {key}={value}" for key, value in details.items())
+        logger.info(
+            f"[INSTRUMENT] MLX distributed task gather {event}: "
+            f"collective={collective}, operation={operation}, phase={phase}, "
+            f"rank={rank}/{world_size}, "
+            f"generation_token={generation_token_count}, "
+            f"active={mx.get_active_memory() / bytes_per_mib:.1f}MiB, "
+            f"cached={mx.get_cache_memory() / bytes_per_mib:.1f}MiB, "
+            f"peak={mx.get_peak_memory() / bytes_per_mib:.1f}MiB"
+            f"{detail_text}{duration}"
+        )
+
     def encode_task_id(task_id: TaskId) -> list[int]:
         utf8_task_id = task_id.encode()
         return [
@@ -904,12 +937,20 @@ def mx_all_gather_tasks(
     uuid_byte_length = 36
 
     n_tasks = len(tasks)
+    count_gather_start = time.perf_counter()
+    log_collective("start", "count", local_tasks=n_tasks)
     all_counts = cast(
         list[int],
         mx.distributed.all_gather(mx.array([n_tasks]), group=group).tolist(),
     )
+    log_collective(
+        "complete",
+        "count",
+        count_gather_start,
+        local_tasks=n_tasks,
+        gathered_tasks=sum(all_counts),
+    )
     max_tasks = max(all_counts)
-    world_size: int = 1 if group is None else group.size()
 
     if max_tasks == 0:
         return [], []
@@ -920,11 +961,27 @@ def mx_all_gather_tasks(
 
     assert all(len(encoded_task_id) == uuid_byte_length for encoded_task_id in padded)
 
+    id_gather_start = time.perf_counter()
+    log_collective(
+        "start",
+        "task_ids",
+        local_tasks=n_tasks,
+        max_tasks=max_tasks,
+        task_id_values=max_tasks * uuid_byte_length,
+    )
     gathered = cast(
         list[list[list[int]]],
         mx.distributed.all_gather(mx.array(padded), group=group)
         .reshape(world_size, max_tasks, -1)
         .tolist(),
+    )
+    log_collective(
+        "complete",
+        "task_ids",
+        id_gather_start,
+        local_tasks=n_tasks,
+        max_tasks=max_tasks,
+        task_id_values=max_tasks * uuid_byte_length,
     )
     all_task_ids: list[list[TaskId]] = [
         [decode_task_id(encoded_task_id) for encoded_task_id in rank_tasks[:count]]
