@@ -135,29 +135,15 @@ class SequentialGenerator(Engine):
         self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
 
-    def agree_on_tasks(
-        self,
-        phase: str = "scheduler",
-        generation_token_count: int | None = None,
-    ) -> None:
+    def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
-        agreed, different = mx_all_gather_tasks(
-            self._maybe_queue,
-            self.group,
-            operation="tasks",
-            phase=phase,
-            generation_token_count=generation_token_count,
-        )
+        agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
         # Extend from `agreed` (sorted by task_id on all ranks) to guarantee every
         # rank enqueues tasks in the same order, preventing TP collective deadlocks.
         self._queue.extend(agreed)
         self._maybe_queue = list(different)
 
-    def agree_on_cancellations(
-        self,
-        phase: str = "scheduler",
-        generation_token_count: int | None = None,
-    ) -> None:
+    def agree_on_cancellations(self) -> None:
         """Agree between all ranks about which tasks to cancel."""
         has_cancel_all = False
         for task_id in self.cancel_receiver.collect():
@@ -170,13 +156,7 @@ class SequentialGenerator(Engine):
         if mx_any(has_cancel_all, self.group):
             self._cancelled_tasks.add(CANCEL_ALL_TASKS)
 
-        agreed, different = mx_all_gather_tasks(
-            self._maybe_cancel,
-            self.group,
-            operation="cancellations",
-            phase=phase,
-            generation_token_count=generation_token_count,
-        )
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
         self._cancelled_tasks.update(task.task_id for task in agreed)
         self._maybe_cancel = list(different)
 
@@ -186,7 +166,7 @@ class SequentialGenerator(Engine):
         tuple[TaskId, GenerationChunk | FinishedResponse | CancelledResponse]
     ]:
         if self._active is None:
-            self.agree_on_tasks(phase="scheduler")
+            self.agree_on_tasks()
 
             if self._queue:
                 self._start_next()
@@ -285,32 +265,24 @@ class SequentialGenerator(Engine):
                 )
 
         def distributed_prompt_progress_callback() -> None:
-            self.agree_on_cancellations(phase="prefill")
+            self.agree_on_cancellations()
             if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
 
-            self.agree_on_tasks(phase="prefill")
+            self.agree_on_tasks()
 
         tokens_since_cancel_check = self.check_for_cancel_every
-        generation_token_count = 0
 
         def on_generation_token() -> None:
-            nonlocal generation_token_count, tokens_since_cancel_check
-            generation_token_count += 1
+            nonlocal tokens_since_cancel_check
             tokens_since_cancel_check += 1
             if tokens_since_cancel_check >= self.check_for_cancel_every:
                 tokens_since_cancel_check = 0
-                self.agree_on_cancellations(
-                    phase="generation",
-                    generation_token_count=generation_token_count,
-                )
+                self.agree_on_cancellations()
                 if self.should_cancel(task.task_id):
                     raise PrefillCancelled()
 
-                self.agree_on_tasks(
-                    phase="generation",
-                    generation_token_count=generation_token_count,
-                )
+                self.agree_on_tasks()
 
         return mlx_generate(
             model=self.model,
@@ -400,29 +372,15 @@ class BatchGenerator(Engine):
         self._all_tasks[task.task_id] = task
         self._maybe_queue.append(task)
 
-    def agree_on_tasks(
-        self,
-        phase: str = "scheduler",
-        generation_token_count: int | None = None,
-    ) -> None:
+    def agree_on_tasks(self) -> None:
         """Agree between all ranks about the task ordering (some may have received in different order or not at all)."""
-        agreed, different = mx_all_gather_tasks(
-            self._maybe_queue,
-            self.group,
-            operation="tasks",
-            phase=phase,
-            generation_token_count=generation_token_count,
-        )
+        agreed, different = mx_all_gather_tasks(self._maybe_queue, self.group)
         # Extend from `agreed` (sorted by task_id on all ranks) to guarantee every
         # rank enqueues tasks in the same order, preventing TP collective deadlocks.
         self._queue.extend(agreed)
         self._maybe_queue = list(different)
 
-    def agree_on_cancellations(
-        self,
-        phase: str = "scheduler",
-        generation_token_count: int | None = None,
-    ) -> None:
+    def agree_on_cancellations(self) -> None:
         """Agree between all ranks about which tasks to cancel."""
         has_cancel_all = False
         for task_id in self.cancel_receiver.collect():
@@ -435,13 +393,7 @@ class BatchGenerator(Engine):
         if mx_any(has_cancel_all, self.group):
             self._cancelled_tasks.add(CANCEL_ALL_TASKS)
 
-        agreed, different = mx_all_gather_tasks(
-            self._maybe_cancel,
-            self.group,
-            operation="cancellations",
-            phase=phase,
-            generation_token_count=generation_token_count,
-        )
+        agreed, different = mx_all_gather_tasks(self._maybe_cancel, self.group)
         self._cancelled_tasks.update(task.task_id for task in agreed)
         self._maybe_cancel = list(different)
 
@@ -451,7 +403,7 @@ class BatchGenerator(Engine):
         tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
     ]:
         if not self._queue:
-            self.agree_on_tasks(phase="scheduler")
+            self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
@@ -572,32 +524,24 @@ class BatchGenerator(Engine):
                 )
 
         def distributed_prompt_progress_callback() -> None:
-            self.agree_on_cancellations(phase="prefill")
+            self.agree_on_cancellations()
             if self.should_cancel(task.task_id):
                 raise PrefillCancelled()
 
-            self.agree_on_tasks(phase="prefill")
+            self.agree_on_tasks()
 
         tokens_since_cancel_check = self.check_for_cancel_every
-        generation_token_count = 0
 
         def on_generation_token() -> None:
-            nonlocal generation_token_count, tokens_since_cancel_check
-            generation_token_count += 1
+            nonlocal tokens_since_cancel_check
             tokens_since_cancel_check += 1
             if tokens_since_cancel_check >= self.check_for_cancel_every:
                 tokens_since_cancel_check = 0
-                self.agree_on_cancellations(
-                    phase="generation",
-                    generation_token_count=generation_token_count,
-                )
+                self.agree_on_cancellations()
                 if self.should_cancel(task.task_id):
                     self._cancelled_tasks.add(task.task_id)
 
-                self.agree_on_tasks(
-                    phase="generation",
-                    generation_token_count=generation_token_count,
-                )
+                self.agree_on_tasks()
 
         return self._gen.submit(
             task_params=task.task_params,
