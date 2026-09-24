@@ -322,7 +322,12 @@ exo supports several environment variables for configuration:
 | `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
 | `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+| `EXO_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained prefix-cache entries across all MLX models. Set to `0` to disable persistence. | `8` |
+| `EXO_MEDIA_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained prefix-cache entries containing image/media regions. Set to `0` to disable media persistence. | `4` |
 | `EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained DeepSeek V4 prefix-cache entries. Set to `0` to disable persistence. | `3` |
+| `EXO_PREFILL_MEMORY_RESERVE_GB` | Minimum available system memory to preserve before restoring or storing prefix caches. Defaults to 15% of RAM, bounded to 8-48 GiB. Set to `0` to disable reserve-based eviction. | Adaptive |
+| `EXO_MLX_CACHE_LIMIT_GB` | Maximum MLX allocator cache for reusable free buffers on each worker. Active model and KV memory are not included. | `16` |
+| `EXO_CLEAR_CACHE_DURING_PREFILL` | Release unused MLX allocator buffers after each pipeline-prefill chunk. Set to `0`, `false`, `no`, or `off` to disable for throughput comparison. | `true` |
 
 **Example usage:**
 

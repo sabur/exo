@@ -166,6 +166,14 @@ def load_mlx_items(
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
+    cache_limit_gb = float(os.environ.get("EXO_MLX_CACHE_LIMIT_GB", "16"))
+    if cache_limit_gb < 0:
+        raise ValueError(
+            "EXO_MLX_CACHE_LIMIT_GB must be greater than or equal to zero"
+        )
+    mx.set_cache_limit(int(cache_limit_gb * (1 << 30)))
+    logger.info(f"MLX allocator cache limit set to {cache_limit_gb:.1f} GiB")
+
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
     if group is None:

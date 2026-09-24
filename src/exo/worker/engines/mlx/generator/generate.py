@@ -2,6 +2,7 @@ import contextlib
 import functools
 import hashlib
 import math
+import os
 import time
 import uuid
 from typing import Callable, Generator, cast, get_args
@@ -76,6 +77,10 @@ from exo.worker.engines.mlx.vision import (
     prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
+
+_CLEAR_CACHE_DURING_PREFILL = os.environ.get(
+    "EXO_CLEAR_CACHE_DURING_PREFILL", "1"
+).lower() not in {"0", "false", "no", "off"}
 
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
@@ -292,6 +297,8 @@ def pipeline_parallel_prefill(
                     distributed_prompt_progress_callback()
 
                 flush_prefill_sends()
+                if _CLEAR_CACHE_DURING_PREFILL:
+                    mx.clear_cache()
 
                 prompt_progress_callback(processed, total)
 
@@ -308,6 +315,8 @@ def pipeline_parallel_prefill(
             model(prompt[-1:][None], cache=_prompt_cache)
             quantize_cache_fn(_prompt_cache)
         flush_prefill_sends()
+        if _CLEAR_CACHE_DURING_PREFILL:
+            mx.clear_cache()
 
     assert _prompt_cache is not None
     with mx.stream(generation_stream):

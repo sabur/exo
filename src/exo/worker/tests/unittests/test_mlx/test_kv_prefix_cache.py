@@ -25,6 +25,7 @@ from exo.worker.engines.mlx.cache import (
 from exo.worker.engines.mlx.generator.generate import (
     _v4_snapshot_progress_targets,
     mlx_generate,
+    pipeline_parallel_prefill,
     prefill,
 )
 from exo.worker.engines.mlx.types import Model
@@ -492,6 +493,237 @@ class TestKVPrefix:
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+
+    def test_generic_add_retains_eight_entries_and_evicts_the_lru(self):
+        prefix_cache = KVPrefixCache(None)
+
+        with patch(
+            "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8
+        ):
+            for token_count in range(1, 10):
+                prefix_cache.add_kv_cache(
+                    mx.arange(token_count, dtype=mx.int32),
+                    [KVCache()],
+                )
+
+        assert len(prefix_cache.prompts) == 8
+        assert [len(prompt) for prompt in prefix_cache.prompts] == list(
+            range(2, 10)
+        )
+
+    def test_media_add_retains_four_entries_and_evicts_media_lru(self):
+        prefix_cache = KVPrefixCache(None)
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8
+            ),
+            patch(
+                "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES",
+                4,
+            ),
+        ):
+            prefix_cache.add_kv_cache(
+                mx.arange(100, dtype=mx.int32),
+                [KVCache()],
+            )
+            for token_count in range(1, 6):
+                prefix_cache.add_kv_cache(
+                    mx.arange(token_count, dtype=mx.int32),
+                    [KVCache()],
+                    media_regions=[MagicMock()],
+                )
+
+        assert len(prefix_cache.prompts) == 5
+        assert len(prefix_cache.prompts[0]) == 100
+        assert [len(prompt) for prompt in prefix_cache.prompts[1:]] == [
+            2,
+            3,
+            4,
+            5,
+        ]
+
+    def test_generic_cap_append_failure_preserves_existing_entry(self):
+        prefix_cache = KVPrefixCache(None)
+        first_prompt = mx.arange(4, dtype=mx.int32)
+        prefix_cache.add_kv_cache(first_prompt, [KVCache()])
+        prefix_cache._entry_generations = _FailingGenerations(
+            prefix_cache._entry_generations
+        )
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 1
+            ),
+            pytest.raises(RuntimeError, match="simulated generations append failure"),
+        ):
+            prefix_cache.add_kv_cache(
+                mx.arange(8, dtype=mx.int32),
+                [KVCache()],
+            )
+
+        assert len(prefix_cache.prompts) == 1
+        assert mx.array_equal(prefix_cache.prompts[0], first_prompt)
+
+    def test_update_to_media_entry_enforces_media_cap(self):
+        prefix_cache = KVPrefixCache(None)
+        first_prompt = mx.arange(4, dtype=mx.int32)
+        second_prompt = mx.arange(8, dtype=mx.int32)
+        prefix_cache.add_kv_cache(
+            first_prompt,
+            [KVCache()],
+            media_regions=[MagicMock()],
+        )
+        prefix_cache.add_kv_cache(second_prompt, [KVCache()])
+
+        with patch(
+            "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 1
+        ):
+            prefix_cache.update_kv_cache(
+                1,
+                second_prompt,
+                [KVCache()],
+                snapshots=None,
+                restore_pos=0,
+                media_regions=[MagicMock()],
+            )
+
+        assert len(prefix_cache.prompts) == 1
+        assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
+        assert prefix_cache._media_regions[0]
+
+    def test_update_drops_entry_when_media_persistence_is_disabled(self):
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.add_kv_cache(
+            mx.arange(4, dtype=mx.int32),
+            [KVCache()],
+        )
+
+        with patch(
+            "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 0
+        ):
+            prefix_cache.update_kv_cache(
+                0,
+                mx.arange(8, dtype=mx.int32),
+                [KVCache()],
+                snapshots=None,
+                restore_pos=0,
+                media_regions=[MagicMock()],
+            )
+
+        assert prefix_cache.prompts == []
+        assert prefix_cache.caches == []
+
+    def test_get_evicts_lru_entries_until_prefill_headroom_is_available(self):
+        prefix_cache = KVPrefixCache(None)
+        for token_count in range(1, 4):
+            prefix_cache.add_kv_cache(
+                mx.arange(token_count, dtype=mx.int32),
+                [KVCache()],
+            )
+
+        memory_samples = [
+            MagicMock(available=1),
+            MagicMock(available=2),
+            MagicMock(available=3),
+        ]
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache._PREFILL_MEMORY_RESERVE_BYTES", 3
+            ),
+            patch(
+                "exo.worker.engines.mlx.cache.psutil.virtual_memory",
+                side_effect=memory_samples,
+            ),
+        ):
+            prefix_cache.get_kv_cache(
+                MagicMock(),
+                mx.arange(10, dtype=mx.int32),
+            )
+
+        assert len(prefix_cache.prompts) == 1
+        assert len(prefix_cache.prompts[0]) == 3
+
+    def test_pipeline_prefill_clears_unused_allocator_cache_per_chunk(self):
+        model = MagicMock()
+        group = MagicMock()
+        group.rank.return_value = 0
+        group.size.return_value = 1
+        prompt = mx.arange(9, dtype=mx.int32)
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"
+            ),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.flush_prefill_sends"
+            ),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.clear_prefill_sends"
+            ),
+            patch("exo.worker.engines.mlx.generator.generate.mx.eval"),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.mx.clear_cache"
+            ) as clear_cache,
+            patch(
+                "exo.worker.engines.mlx.generator.generate."
+                "_CLEAR_CACHE_DURING_PREFILL",
+                True,
+            ),
+        ):
+            pipeline_parallel_prefill(
+                model=model,
+                prompt=prompt,
+                prompt_cache=[KVCache()],
+                prefill_step_size=4,
+                kv_group_size=None,
+                kv_bits=None,
+                prompt_progress_callback=MagicMock(),
+                distributed_prompt_progress_callback=None,
+                group=group,
+            )
+
+        assert clear_cache.call_count == 4
+
+    def test_pipeline_prefill_cache_clearing_can_be_disabled(self):
+        model = MagicMock()
+        group = MagicMock()
+        group.rank.return_value = 0
+        group.size.return_value = 1
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"
+            ),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.flush_prefill_sends"
+            ),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.clear_prefill_sends"
+            ),
+            patch("exo.worker.engines.mlx.generator.generate.mx.eval"),
+            patch(
+                "exo.worker.engines.mlx.generator.generate.mx.clear_cache"
+            ) as clear_cache,
+            patch(
+                "exo.worker.engines.mlx.generator.generate."
+                "_CLEAR_CACHE_DURING_PREFILL",
+                False,
+            ),
+        ):
+            pipeline_parallel_prefill(
+                model=model,
+                prompt=mx.arange(9, dtype=mx.int32),
+                prompt_cache=[KVCache()],
+                prefill_step_size=4,
+                kv_group_size=None,
+                kv_bits=None,
+                prompt_progress_callback=MagicMock(),
+                distributed_prompt_progress_callback=None,
+                group=group,
+            )
+
+        clear_cache.assert_not_called()
 
     def test_v4_add_retains_three_entries_and_evicts_the_lru(self):
         """A cap of 3 retains three entries and evicts the LRU."""

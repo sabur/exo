@@ -60,8 +60,33 @@ def _read_non_negative_int_env(name: str, default: int) -> int:
     return value
 
 
+def _read_non_negative_float_env(name: str, default: float) -> float:
+    value = float(os.environ.get(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be greater than or equal to zero")
+    return value
+
+
+def _default_prefill_memory_reserve_gb() -> float:
+    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
+    return min(48.0, max(8.0, total_gb * 0.15))
+
+
+_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
+    "EXO_PREFIX_CACHE_MAX_ENTRIES", 8
+)
+_MEDIA_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
+    "EXO_MEDIA_PREFIX_CACHE_MAX_ENTRIES", 4
+)
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 3
+)
+_PREFILL_MEMORY_RESERVE_BYTES = int(
+    _read_non_negative_float_env(
+        "EXO_PREFILL_MEMORY_RESERVE_GB",
+        _default_prefill_memory_reserve_gb(),
+    )
+    * (1 << 30)
 )
 
 # Retain fixed logarithmic anchors plus four tail-safe rollback points and the
@@ -612,9 +637,19 @@ class KVPrefixCache:
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         is_v4 = has_deepseek_v4_cache(cache)
+        has_media = bool(media_regions)
+        if _PREFIX_CACHE_MAX_ENTRIES == 0:
+            logger.info("Prefix cache persistence is disabled")
+            return
+        if has_media and _MEDIA_PREFIX_CACHE_MAX_ENTRIES == 0:
+            logger.info("Media prefix cache persistence is disabled")
+            return
         if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
             logger.info("DeepSeek V4 prefix cache persistence is disabled")
             return
+
+        self._evict_for_prefill_headroom()
+        self._evict_if_needed()
 
         store_start = time.perf_counter()
         stored_cache = deepcopy(cache)
@@ -622,9 +657,6 @@ class KVPrefixCache:
         stored_snapshots = (
             _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
         )
-        if is_v4:
-            self._evict_v4_entries_for_add()
-        self._evict_if_needed()
 
         access_counter = self._access_counter + 1
         start_length = len(self.prompts)
@@ -656,12 +688,14 @@ class KVPrefixCache:
             raise
 
         self._access_counter = access_counter
+        self._enforce_entry_caps(protected_generation=generation)
+        stored_index = self._entry_generations.index(generation)
         logger.info(
-            f"KV cache added (index {start_length}): "
+            f"KV cache added (index {stored_index}): "
             f"{len(prompt_tokens)} tokens, {len(self.prompts)} entries, "
             f"entry_id={self._instance_id}:{generation}, "
             f"store_ms={store_ms:.3f}, "
-            f"telemetry={self._telemetry_summary(start_length)}"
+            f"telemetry={self._telemetry_summary(stored_index)}"
         )
         if is_v4 and stored_snapshots:
             _log_v4_snapshot_retention(stored_snapshots)
@@ -678,6 +712,25 @@ class KVPrefixCache:
         prefill_tps: float = 0.0,
     ):
         """Update an existing cache entry in-place."""
+        entry_generation = self._entry_generations[index]
+        has_media = bool(media_regions)
+        if _PREFIX_CACHE_MAX_ENTRIES == 0:
+            self._evict_entry(index, "prefix cache persistence disabled")
+            gc.collect()
+            mx.clear_cache()
+            return
+        if has_media and _MEDIA_PREFIX_CACHE_MAX_ENTRIES == 0:
+            self._evict_entry(index, "media prefix persistence disabled")
+            gc.collect()
+            mx.clear_cache()
+            return
+
+        self._evict_for_prefill_headroom(
+            protected_generation=entry_generation
+        )
+        self._evict_if_needed(protected_generation=entry_generation)
+        index = self._entry_generations.index(entry_generation)
+
         old_prompt = self.prompts[index]
         old_generation = self._entry_generations[index]
         old_telemetry_summary = self._telemetry_summary(index)
@@ -737,6 +790,11 @@ class KVPrefixCache:
                 f"new_tokens={len(prompt_tokens)}, "
                 f"old_telemetry={old_telemetry_summary})"
             )
+        stored_generation = self._entry_generations[index]
+        self._enforce_entry_caps(
+            protected_generation=stored_generation
+        )
+        index = self._entry_generations.index(stored_generation)
         logger.info(
             f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
             f"entry_id={self._instance_id}:{self._entry_generations[index]}, "
@@ -789,6 +847,8 @@ class KVPrefixCache:
         selection_start = time.perf_counter()
         max_length = len(prompt_tokens)
         query_regions = media_regions or []
+
+        self._evict_for_prefill_headroom()
 
         best_index: int | None = None
         best_raw_length = 0
@@ -979,7 +1039,9 @@ class KVPrefixCache:
 
         return match_length
 
-    def _evict_if_needed(self):
+    def _evict_if_needed(
+        self, *, protected_generation: int | None = None
+    ) -> None:
         """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:
             return
@@ -990,35 +1052,134 @@ class KVPrefixCache:
             len(self.caches) > 0
             and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
         ):
-            lru_index = self._last_used.index(min(self._last_used))
+            candidates = [
+                index
+                for index, generation in enumerate(self._entry_generations)
+                if generation != protected_generation
+            ]
+            if not candidates:
+                logger.info(
+                    "KV cache remains above memory threshold; "
+                    "only the protected entry remains"
+                )
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
             self._evict_entry(lru_index, "memory pressure")
+            gc.collect()
+            mx.clear_cache()
             evicted_any = True
 
         if evicted_any:
-            gc.collect()
-            mx.clear_cache()
+            logger.info("KV cache memory-pressure eviction complete")
 
-    def _evict_v4_entries_for_add(self) -> None:
+    def _enforce_entry_caps(self, *, protected_generation: int) -> None:
         evicted_any = False
+
         while (
             sum(has_deepseek_v4_cache(cache) for cache in self.caches)
-            >= _V4_PREFIX_CACHE_MAX_ENTRIES
+            > _V4_PREFIX_CACHE_MAX_ENTRIES
         ):
             candidates = [
                 index
                 for index, cache in enumerate(self.caches)
-                if has_deepseek_v4_cache(cache)
+                if (
+                    has_deepseek_v4_cache(cache)
+                    and self._entry_generations[index] != protected_generation
+                )
             ]
-            lru_index = min(candidates, key=lambda index: self._last_used[index])
+            if not candidates:
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
             self._evict_entry(
                 lru_index,
                 f"DeepSeek V4 entry cap {_V4_PREFIX_CACHE_MAX_ENTRIES}",
             )
             evicted_any = True
 
+        while (
+            sum(bool(regions) for regions in self._media_regions)
+            > _MEDIA_PREFIX_CACHE_MAX_ENTRIES
+        ):
+            candidates = [
+                index
+                for index, regions in enumerate(self._media_regions)
+                if (
+                    regions
+                    and self._entry_generations[index] != protected_generation
+                )
+            ]
+            if not candidates:
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
+            self._evict_entry(
+                lru_index,
+                f"media entry cap {_MEDIA_PREFIX_CACHE_MAX_ENTRIES}",
+            )
+            evicted_any = True
+
+        while len(self.caches) > _PREFIX_CACHE_MAX_ENTRIES:
+            candidates = [
+                index
+                for index, generation in enumerate(self._entry_generations)
+                if generation != protected_generation
+            ]
+            if not candidates:
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
+            self._evict_entry(
+                lru_index,
+                f"total entry cap {_PREFIX_CACHE_MAX_ENTRIES}",
+            )
+            evicted_any = True
+
         if evicted_any:
             gc.collect()
             mx.clear_cache()
+
+    def _evict_for_prefill_headroom(
+        self, *, protected_generation: int | None = None
+    ) -> None:
+        if _PREFILL_MEMORY_RESERVE_BYTES == 0:
+            return
+
+        evicted_any = False
+        while (
+            self.caches
+            and psutil.virtual_memory().available < _PREFILL_MEMORY_RESERVE_BYTES
+        ):
+            candidates = [
+                index
+                for index, generation in enumerate(self._entry_generations)
+                if generation != protected_generation
+            ]
+            if not candidates:
+                logger.info(
+                    "KV cache remains below prefill memory reserve; "
+                    "only the protected entry remains"
+                )
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
+            self._evict_entry(
+                lru_index,
+                "prefill memory reserve "
+                f"{_PREFILL_MEMORY_RESERVE_BYTES / (1 << 30):.1f}GiB",
+            )
+            gc.collect()
+            mx.clear_cache()
+            evicted_any = True
+
+        if evicted_any:
+            logger.info("KV cache prefill-headroom eviction complete")
 
     def _evict_entry(self, index: int, reason: str) -> None:
         evicted_tokens = len(self.prompts[index])
