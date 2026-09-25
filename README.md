@@ -326,6 +326,7 @@ exo supports several environment variables for configuration:
 | `EXO_MEDIA_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained prefix-cache entries containing image/media regions. Set to `0` to disable media persistence. | `4` |
 | `EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained DeepSeek V4 prefix-cache entries. Set to `0` to disable persistence. | `3` |
 | `EXO_PREFILL_MEMORY_RESERVE_GB` | Minimum available system memory to preserve before restoring or storing prefix caches. Defaults to 15% of RAM, bounded to 8-48 GiB. Set to `0` to disable reserve-based eviction. | Adaptive |
+| `EXO_PREFILL_STEP_SIZE` | Number of prompt tokens processed per local or pipeline prefill chunk. Values must be at least 4 and divisible by 4. Smaller values can reduce transient memory at the cost of additional dispatch overhead. | `4096` |
 | `EXO_MLX_CACHE_LIMIT_GB` | Optional MLX allocator-cache limit for reusable free buffers on each worker. Active model and KV memory are not included. When unset, MLX retains its native allocator policy. | MLX default |
 | `EXO_CLEAR_CACHE_DURING_PREFILL` | Release unused MLX allocator buffers after each custom pipeline-prefill chunk, matching the standard `mlx-lm` prefill lifecycle. Set to `0`, `false`, `no`, or `off` only for pipeline-prefill throughput comparison. This setting does not affect the standard `mlx-lm` prefill path. | `true` |
 
@@ -343,6 +344,9 @@ EXO_OFFLINE=true uv run exo
 
 # Enable image models
 EXO_ENABLE_IMAGE_MODELS=true uv run exo
+
+# Compare long-context prefill memory with smaller chunks
+EXO_PREFILL_STEP_SIZE=2048 uv run exo
 
 # Use custom namespace for cluster isolation
 EXO_LIBP2P_NAMESPACE=my-dev-cluster uv run exo

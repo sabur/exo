@@ -80,6 +80,27 @@ _CLEAR_CACHE_DURING_PREFILL = os.environ.get(
     "EXO_CLEAR_CACHE_DURING_PREFILL", "1"
 ).lower() not in {"0", "false", "no", "off"}
 
+
+def _parse_prefill_step_size(value: str | None) -> int:
+    if value is None:
+        return 4096
+
+    try:
+        step_size = int(value)
+    except ValueError as exc:
+        raise ValueError("EXO_PREFILL_STEP_SIZE must be an integer") from exc
+
+    if step_size < 4 or step_size % 4 != 0:
+        raise ValueError(
+            "EXO_PREFILL_STEP_SIZE must be at least 4 and divisible by 4"
+        )
+    return step_size
+
+
+_PREFILL_STEP_SIZE = _parse_prefill_step_size(
+    os.environ.get("EXO_PREFILL_STEP_SIZE")
+)
+
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
 generation_stream = mx.new_stream(mx.default_device())
@@ -351,9 +372,11 @@ def prefill(
     if num_tokens == 0:
         return 0.0, 0, []
 
+    prefill_step_size = _PREFILL_STEP_SIZE
     initial_active_mib, initial_cached_mib, initial_peak_mib = _mlx_memory_mib()
     logger.info(
         f"[INSTRUMENT] Prefill start: {num_tokens} tokens | "
+        f"step={prefill_step_size} | "
         f"Memory: active={initial_active_mib:.1f}MiB, "
         f"cached={initial_cached_mib:.1f}MiB, peak={initial_peak_mib:.1f}MiB"
     )
@@ -363,7 +386,6 @@ def prefill(
     has_ssm = has_non_kv_caches(cache)
     has_v4 = has_deepseek_v4_cache(cache)
     is_pipeline = _has_pipeline_communication_layer(model)
-    prefill_step_size = 4096
     use_pipeline_prefill = is_pipeline and num_tokens >= prefill_step_size
     pipeline_width = (
         group.size() if use_pipeline_prefill and group is not None else 1
