@@ -27,12 +27,6 @@ dependencies = [
   "zstandard>=0.23.0",
   "transformers>=5.6.2",
   "python-daemon>=3.1.2",
-  "torch>=2.10.0",
-  "torchvision>=0.25.0",
-  "mlx>=0.32.0.dev20260516",
-  "mlx-lm>=0.31.3",
-  "tensor>=0.3.6",
-  "mlx-vlm>=0.4.4",
 ]
 
 [project.scripts]

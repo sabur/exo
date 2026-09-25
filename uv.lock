@@ -159,15 +159,6 @@ wheels = [
 ]
 
 [[package]]
-name = "automat"
-version = "25.4.16"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e3/0f/d40bbe294bbf004d436a8bcbcfaadca8b5140d39ad0ad3d73d1a8ba15f14/automat-25.4.16.tar.gz", hash = "sha256:0017591a5477066e90d26b0e696ddc143baafd87b588cfac8100bc6be9634de0", size = 129977, upload-time = "2025-04-16T20:12:16.002Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/ff/1175b0b7371e46244032d43a56862d0af455823b5280a50c63d99cc50f18/automat-25.4.16-py3-none-any.whl", hash = "sha256:04e9bce696a8d5671ee698005af6e5a9fa15354140a87f4870744604dcdd3ba1", size = 42842, upload-time = "2025-04-16T20:12:14.447Z" },
-]
-
-[[package]]
 name = "basedpyright"
 version = "1.37.1"
 source = { registry = "https://pypi.org/simple" }
@@ -255,24 +246,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
-]
-
-[[package]]
-name = "constantly"
-version = "23.10.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4d/6f/cb2a94494ff74aa9528a36c5b1422756330a75a8367bf20bd63171fc324d/constantly-23.10.4.tar.gz", hash = "sha256:aa92b70a33e2ac0bb33cd745eb61776594dc48764b06c35e0efd050b7f1c7cbd", size = 13300, upload-time = "2023-10-28T23:18:24.316Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/40/c199d095151addf69efdb4b9ca3a4f20f70e20508d6222bffb9b76f58573/constantly-23.10.4-py3-none-any.whl", hash = "sha256:3fd9b4d1c3dc1ec9757f3c52aef7e53ad9323dbe39f51dfd4c43853b68dfa3f9", size = 13547, upload-time = "2023-10-28T23:18:23.038Z" },
-]
-
-[[package]]
-name = "construct"
-version = "2.10.70"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/02/77/8c84b98eca70d245a2a956452f21d57930d22ab88cbeed9290ca630cf03f/construct-2.10.70.tar.gz", hash = "sha256:4d2472f9684731e58cc9c56c463be63baa1447d674e0d66aeb5627b22f512c29", size = 86337, upload-time = "2023-11-29T08:44:49.545Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/fb/08b3f4bf05da99aba8ffea52a558758def16e8516bc75ca94ff73587e7d3/construct-2.10.70-py3-none-any.whl", hash = "sha256:c80be81ef595a1a821ec69dc16099550ed22197615f4320b57cc9ce2a672cb30", size = 63020, upload-time = "2023-11-29T08:44:46.876Z" },
 ]
 
 [[package]]
@@ -461,11 +434,6 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "hypercorn" },
     { name = "loguru" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "mlx-lm" },
-    { name = "mlx-vlm" },
     { name = "msgspec" },
     { name = "openai-harmony" },
     { name = "psutil" },
@@ -473,13 +441,8 @@ dependencies = [
     { name = "python-daemon" },
     { name = "python-multipart" },
     { name = "rustworkx" },
-    { name = "tensor" },
     { name = "tiktoken" },
     { name = "tomlkit" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "torchvision", version = "0.25.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
-    { name = "torchvision", version = "0.25.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "transformers" },
     { name = "types-aiofiles" },
     { name = "zstandard" },
@@ -491,7 +454,7 @@ build = [
 ]
 mlx = [
     { name = "mflux" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx-lm" },
@@ -505,7 +468,7 @@ mlx = [
 ]
 mlx-cpu = [
     { name = "mflux" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cpu') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cpu') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx-cpu", marker = "sys_platform == 'linux'" },
@@ -520,7 +483,7 @@ mlx-cpu = [
 ]
 mlx-cuda12 = [
     { name = "mflux" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx-cuda-12", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra != 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
@@ -537,7 +500,7 @@ mlx-cuda12 = [
 ]
 mlx-cuda13 = [
     { name = "mflux" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "(sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx-cuda-13", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none')" },
@@ -584,12 +547,8 @@ requires-dist = [
     { name = "hypercorn", specifier = ">=0.18.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mflux", marker = "extra == 'mlx'", git = "https://github.com/evanev7/mflux?branch=exo2" },
-    { name = "mlx", marker = "sys_platform != 'darwin' and sys_platform != 'linux'", specifier = ">=0.32.0.dev20260516" },
-    { name = "mlx", marker = "sys_platform == 'darwin'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx", marker = "sys_platform == 'darwin' and extra == 'mlx'", git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks" },
     { name = "mlx", marker = "sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'mlx'", specifier = "==0.32.0" },
-    { name = "mlx", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" },
-    { name = "mlx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" },
     { name = "mlx", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'mlx'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" },
     { name = "mlx", marker = "platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'mlx'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" },
     { name = "mlx-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu'", specifier = "==0.31.2" },
@@ -597,9 +556,7 @@ requires-dist = [
     { name = "mlx-cuda-12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'mlx-cuda12'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_12-0.32.0-py3-none-manylinux_2_35_x86_64.whl" },
     { name = "mlx-cuda-13", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'mlx-cuda13'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_aarch64.whl" },
     { name = "mlx-cuda-13", marker = "platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'mlx-cuda13'", url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl" },
-    { name = "mlx-lm", git = "https://github.com/sabur/mlx-lm?branch=v4-prefill-adaptive-clear" },
     { name = "mlx-lm", marker = "extra == 'mlx'", git = "https://github.com/sabur/mlx-lm?branch=v4-prefill-adaptive-clear" },
-    { name = "mlx-vlm", specifier = ">=0.4.4" },
     { name = "mlx-vlm", marker = "extra == 'mlx'", specifier = ">=0.3.11" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "nanobind", marker = "extra == 'build'" },
@@ -611,32 +568,23 @@ requires-dist = [
     { name = "python-daemon", specifier = ">=3.1.2" },
     { name = "python-multipart", specifier = ">=0.0.21" },
     { name = "rustworkx", specifier = ">=0.17.1" },
-    { name = "tensor", specifier = ">=0.3.6" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = "==2.10.0" },
-    { name = "torch", marker = "sys_platform != 'linux' or (extra != 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13')", specifier = ">=2.10.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx' and extra != 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchaudio", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = "==2.10.0" },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'mlx' and extra != 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0" },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda13'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchvision", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = "==0.25.0" },
-    { name = "torchvision", marker = "sys_platform != 'linux' or (extra != 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13')", specifier = ">=0.25.0" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx' and extra != 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==0.25.0" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==0.25.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = "==0.25.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx' and extra == 'mlx-cuda13'", specifier = "==0.25.0", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = ">=0.25.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx-cuda12' and extra != 'mlx-cuda13'", specifier = ">=0.25.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'mlx-cuda13'", specifier = ">=0.25.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "transformers", specifier = ">=5.6.2" },
     { name = "types-aiofiles", specifier = ">=24.1.0.20250708" },
     { name = "zstandard", specifier = ">=0.23.0" },
@@ -1005,18 +953,6 @@ wheels = [
 ]
 
 [[package]]
-name = "hyperlink"
-version = "21.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "idna" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/51/1947bd81d75af87e3bb9e34593a4cf118115a8feb451ce7a69044ef1412e/hyperlink-21.0.0.tar.gz", hash = "sha256:427af957daa58bc909471c6c40f74c5450fa123dd093fc53efd2e91d2705a56b", size = 140743, upload-time = "2021-01-08T05:51:20.972Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/aa/8caf6a0a3e62863cbb9dab27135660acba46903b703e224f14f447e57934/hyperlink-21.0.0-py2.py3-none-any.whl", hash = "sha256:e6b14c37ecb73e89c77d78cdb4c2cc8f3fb59a885c5b3f819ff4ed80f25af1b4", size = 74638, upload-time = "2021-01-08T05:51:22.906Z" },
-]
-
-[[package]]
 name = "id"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1035,18 +971,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/0703ccc57f3a7233505399edb88de3cbd678da106337b9fcde432b65ed60/idna-3.11.tar.gz", hash = "sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902", size = 194582, upload-time = "2025-10-12T14:55:20.501Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea", size = 71008, upload-time = "2025-10-12T14:55:18.883Z" },
-]
-
-[[package]]
-name = "incremental"
-version = "24.11.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ef/3c/82e84109e02c492f382c711c58a3dd91badda6d746def81a1465f74dc9f5/incremental-24.11.0.tar.gz", hash = "sha256:87d3480dbb083c1d736222511a8cf380012a8176c2456d01ef483242abbbcf8c", size = 24000, upload-time = "2025-11-28T02:30:17.861Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/55/0f4df2a44053867ea9cbea73fc588b03c55605cd695cee0a3d86f0029cb2/incremental-24.11.0-py3-none-any.whl", hash = "sha256:a34450716b1c4341fe6676a0598e88a39e04189f4dce5dc96f656e040baa10b3", size = 21109, upload-time = "2025-11-28T02:30:16.442Z" },
 ]
 
 [[package]]
@@ -1403,7 +1327,7 @@ dependencies = [
     { name = "hf-transfer" },
     { name = "huggingface-hub" },
     { name = "matplotlib" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "numpy" },
@@ -1434,7 +1358,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/55/fa/96d4cc7ada2833571
 
 [[package]]
 name = "mlx"
-version = "0.32.0.dev20260516+cc3f3e60"
+version = "0.32.0.dev20260925+cc3f3e60"
 source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -1609,7 +1533,7 @@ version = "0.31.3"
 source = { git = "https://github.com/sabur/mlx-lm?branch=v4-prefill-adaptive-clear#5de07d553a7fe4dfc8ef2da1d42fc38958ae41bd" }
 dependencies = [
     { name = "jinja2" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "numpy" },
     { name = "protobuf" },
     { name = "pyyaml" },
@@ -1625,7 +1549,7 @@ dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
     { name = "miniaudio" },
-    { name = "mlx", version = "0.32.0.dev20260516+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
+    { name = "mlx", version = "0.32.0.dev20260925+cc3f3e60", source = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git?branch=address-rdma-gpu-locks#cc3f3e60be1289506125f2fa19b73b05aa770df8" }, marker = "sys_platform != 'linux' or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine != 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx", version = "0.32.0", source = { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx-0.32.0-cp313-cp313-manylinux_2_35_x86_64.whl" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (platform_machine == 'aarch64' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda12') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cpu' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-cuda13') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda12' and extra == 'extra-3-exo-mlx-none') or (sys_platform != 'linux' and extra == 'extra-3-exo-mlx-cuda13' and extra == 'extra-3-exo-mlx-none')" },
     { name = "mlx-lm" },
@@ -2254,15 +2178,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyasn1"
-version = "0.6.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a4/9a/23310166d960def5897e91fe20e5b724601b02a22e84ba1f94232c0b7f67/pyasn1-0.6.4.tar.gz", hash = "sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81", size = 151262, upload-time = "2026-07-09T01:12:33.988Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl", hash = "sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b", size = 84410, upload-time = "2026-07-09T01:12:32.92Z" },
-]
-
-[[package]]
 name = "pycparser"
 version = "2.23"
 source = { registry = "https://pypi.org/simple" }
@@ -2372,18 +2287,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/33/c1/1d9de9aeaa1b89b0186e5fe23294ff6517fce1bc69149185577cd31016b2/pyparsing-3.3.1.tar.gz", hash = "sha256:47fad0f17ac1e2cad3de3b458570fbc9b03560aa029ed5e16ee5554da9a2251c", size = 1550512, upload-time = "2025-12-23T03:14:04.391Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/40/2614036cdd416452f5bf98ec037f38a1afb17f327cb8e6b652d4729e0af8/pyparsing-3.3.1-py3-none-any.whl", hash = "sha256:023b5e7e5520ad96642e2c6db4cb683d3970bd640cdf7115049a6e9c3682df82", size = 121793, upload-time = "2025-12-23T03:14:02.103Z" },
-]
-
-[[package]]
-name = "pysnmp"
-version = "7.1.28"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyasn1" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ee/c3/6e7a0e32d6ac94c1465a93dd4826be526a12f26928eed5ee590abfb207d8/pysnmp-7.1.28.tar.gz", hash = "sha256:6b837f1e90a9abb01ea21a1bbf222e6ba67199e6d1bdc4f7083a333a053ed1fc", size = 268283, upload-time = "2026-07-31T13:34:07.082Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/14/79d0c4d338fef4a0911f4d3d3eb9fe9b027ebe4399cc4e41dc3e001c3245/pysnmp-7.1.28-py3-none-any.whl", hash = "sha256:417559de9e35e283882c80913897489554e98a388b2a77b6e1014ea8257cfe1b", size = 355211, upload-time = "2026-07-31T13:34:05.742Z" },
 ]
 
 [[package]]
@@ -2872,19 +2775,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tensor"
-version = "0.3.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "construct" },
-    { name = "protobuf" },
-    { name = "pysnmp" },
-    { name = "pyyaml" },
-    { name = "twisted" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/87/796821bf9579557a5baac1c01c42bd56e3be47bdaf131779ccdd953f1c80/tensor-0.3.6.tar.gz", hash = "sha256:324981c742b8dc03e7d8500fc5560aeefa529604a50357151ca72f66e80aca05", size = 50251, upload-time = "2015-10-26T05:53:26.244Z" }
-
-[[package]]
 name = "termcolor"
 version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3175,24 +3065,6 @@ wheels = [
 ]
 
 [[package]]
-name = "twisted"
-version = "26.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "attrs" },
-    { name = "automat" },
-    { name = "constantly" },
-    { name = "hyperlink" },
-    { name = "incremental" },
-    { name = "typing-extensions" },
-    { name = "zope-interface" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/db/97/6e9beb1e78247ae6dc34114f27d538cf2cb183c4afcd3609dfdf2b0439c8/twisted-26.4.0.tar.gz", hash = "sha256:dbfd0fe1ee409d0243fdd7a6a6ff14f4948cec1fd78e0376291f805e1501fae9", size = 3575095, upload-time = "2026-05-11T11:24:51.861Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/57/bcf4e2370dd218c9aa68a9140a65d86729c73f1d529f7e94786c2766fc72/twisted-26.4.0-py3-none-any.whl", hash = "sha256:dc25ea0ebf6511c24f03232ee9f4afa54b291c5d897990e3a39cc4d14a1ef4c0", size = 3230362, upload-time = "2026-05-11T11:24:49.5Z" },
-]
-
-[[package]]
 name = "typepy"
 version = "1.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3366,19 +3238,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/81/c8/06e1d69295792ba54d556f06686cbd6a7ce39c22307100e3fb4a2c0b0a1d/yarl-1.22.0-cp313-cp313t-musllinux_1_2_s390x.whl", hash = "sha256:5a3bf7f62a289fa90f1990422dc8dff5a458469ea71d1624585ec3a4c8d6960f", size = 356047, upload-time = "2025-10-06T14:11:05.115Z" },
     { url = "https://files.pythonhosted.org/packages/4b/b8/4c0e9e9f597074b208d18cef227d83aac36184bfbc6eab204ea55783dbc5/yarl-1.22.0-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:de6b9a04c606978fdfe72666fa216ffcf2d1a9f6a381058d4378f8d7b1e5de62", size = 342947, upload-time = "2025-10-06T14:11:08.137Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
-]
-
-[[package]]
-name = "zope-interface"
-version = "8.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/08/dc/50550cfcbb2ea3cbca5f1d7ed05c8aa840f831a0f2d63aec0a953f7c590e/zope_interface-8.5.tar.gz", hash = "sha256:7a3ba1c5877f0f3e3906b02ddf793abed2becc2948116414ce0e1dd820b68d6d", size = 257957, upload-time = "2026-05-26T06:50:14.574Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/8c/4c15755d701f2ec0e80d64a18e1ebaf5be2c584c0ec153fd516f5d13eada/zope_interface-8.5-cp313-cp313-macosx_10_9_x86_64.whl", hash = "sha256:28e80457c134d1fa57a7d758004dece348654e1b1467ac22dcdc20fc1d127c52", size = 212512, upload-time = "2026-05-26T06:49:38.996Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/2e/4360c54c465db042cc8fbeeec92abac28b4cedbf6ba63c1f092fd08a190f/zope_interface-8.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:09495ce9d559c06b70f2d4855b3e4f48a822a9ddc8be1d30c5b4e5be14ae1ace", size = 212541, upload-time = "2026-05-26T06:49:41.186Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/a5/692a2b8d70f78e848793231d5fae5fecbf8d0cccd73430fdc34802a6d3c1/zope_interface-8.5-cp313-cp313-manylinux1_i686.manylinux2014_i686.manylinux_2_17_i686.manylinux_2_5_i686.whl", hash = "sha256:7849ad8fa90763cc1087f4dda78ca3a233e950b3e08fac7079297c9cafbbd7bb", size = 265191, upload-time = "2026-05-26T06:49:43.449Z" },
-    { url = "https://files.pythonhosted.org/packages/70/8d/454a9cfc7a050c394ab4f11b3371f7897828b7415e096afff724637e65e0/zope_interface-8.5-cp313-cp313-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:5578c9421ca409a1f39f153d6f7803e4cde01da592ec75a9ac5e1b777d18d33b", size = 270626, upload-time = "2026-05-26T06:49:45.425Z" },
-    { url = "https://files.pythonhosted.org/packages/51/8c/db8409cfa3575b8e9b4800babd7d49f8228433cd1f0c56814bd0ada49c33/zope_interface-8.5-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e1bd7d96b4ca5fa311f54c9eac16dce4886b428c1531dbe06067763ccdf123b4", size = 270444, upload-time = "2026-05-26T06:49:47.025Z" },
 ]
 
 [[package]]
