@@ -1,6 +1,5 @@
 import contextlib
 import functools
-import hashlib
 import math
 import os
 import time
@@ -67,7 +66,6 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
-    system_prompt_token_count,
 )
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
@@ -739,39 +737,11 @@ def mlx_generate(
     prefix_hit_length = 0
     matched_index: int | None = None
     is_exact_hit = False
-    
-    # Structured cache separation: semantic boundaries with content hashes
-    # Calculate segment boundaries from prompt structure
-    # Format: [(segment_id, start_token, end_token, content_hash), ...]
-    segment_boundaries: list[tuple[str, int, int, str]] = []
-    
-    # Segment 1: System prompt
-    system_len = system_prompt_token_count(task, tokenizer)
-    if system_len > 0:
-        system_hash = hashlib.sha256(str(task.instructions).encode()).hexdigest() if task.instructions else "empty"
-        segment_boundaries.append(("system", 0, system_len, system_hash))
-    
-    # Segment 2+: Context and conversation (TODO: add proper boundary detection)
-    # For now, treat everything after system as one segment
-    if len(all_prompt_tokens) > system_len:
-        conv_hash = hashlib.sha256(str([m.content for m in task.input]).encode()).hexdigest()
-        segment_boundaries.append(("context_conv", system_len, len(all_prompt_tokens), conv_hash))
-    
+
     if kv_prefix_cache is None:
         caches = make_kv_cache(model=model)
         prompt_tokens = all_prompt_tokens
-    elif task.use_structured_cache and kv_prefix_cache.segmented_caches:
-        # Use segmented cache with change detection
-        caches, prompt_tokens, hit_rate = kv_prefix_cache.get_segmented_cache(
-            model, all_prompt_tokens, segment_boundaries, media_regions=media_regions
-        )
-        prefix_hit_length = len(all_prompt_tokens) - len(prompt_tokens)
-        if prefix_hit_length > 0:
-            logger.info(
-                f"Segmented cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({hit_rate:.1f}%)"
-            )
     else:
-        # Use traditional token-level prefix cache
         caches, prompt_tokens, matched_index, is_exact_hit = (
             kv_prefix_cache.get_kv_cache(
                 model, all_prompt_tokens, media_regions=media_regions
@@ -861,70 +831,6 @@ def mlx_generate(
                 distributed_prompt_progress_callback,
             )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
-    
-    # Save segmented caches after first prefill
-    if kv_prefix_cache is not None and task.use_structured_cache:
-        for segment_id, start, end, content_hash in segment_boundaries:
-            if segment_id not in kv_prefix_cache.segmented_caches:
-                # First time seeing this segment - save its cache
-                segment_len = end - start
-                segment_cache = make_kv_cache(model)
-                
-                # Extract this segment's portion from the full cache
-                for i, (src, dst) in enumerate(zip(caches, segment_cache)):
-                    # Handle DeepseekV4Cache specially
-                    if isinstance(src, DeepseekV4Cache) and isinstance(dst, DeepseekV4Cache):
-                        # Extract local RotatingKVCache
-                        src_local = src.local
-                        dst_local = dst.local
-                        
-                        if src_local.keys is not None and src_local.keys.shape[2] >= end:
-                            dst_local.keys = _detached_copy(src_local.keys[:, :, start:end, :])
-                            dst_local.values = _detached_copy(src_local.values[:, :, start:end, :])
-                            dst_local.offset = segment_len
-                            dst_local._idx = min(src_local._idx, end) - start
-                        
-                        # Extract compressor branches
-                        for branch_key, src_branch in src._branches.items():
-                            if branch_key not in dst._branches:
-                                continue
-                            dst_branch = dst._branches[branch_key]
-                            
-                            # Extract buffer_kv
-                            if src_branch.buffer_kv is not None and src_branch.buffer_kv.shape[2] >= end:
-                                dst_branch.buffer_kv = _detached_copy(src_branch.buffer_kv[:, :, start:end, :])
-                                dst_branch.buffer_gate = _detached_copy(src_branch.buffer_gate[:, :, start:end, :])
-                            
-                            # Extract prev_kv
-                            if src_branch.prev_kv is not None and src_branch.prev_kv.shape[2] >= end:
-                                dst_branch.prev_kv = _detached_copy(src_branch.prev_kv[:, :, start:end, :])
-                                dst_branch.prev_gate = _detached_copy(src_branch.prev_gate[:, :, start:end, :])
-                            
-                            # Extract pool
-                            if src_branch.pool is not None:
-                                dst_branch.pool = _detached_copy(src_branch.pool[:, :, start:end, :])
-                            
-                            # Copy lengths (slice the lists)
-                            dst_branch.buffer_lengths = src_branch.buffer_lengths[:]
-                            dst_branch.pool_lengths = src_branch.pool_lengths[:]
-                            dst_branch.buffer_count = src_branch.buffer_count[:]
-                    
-                    elif hasattr(dst, 'keys') and hasattr(src, 'keys'):
-                        # Standard RotatingKVCache / ArraysCache handling
-                        if src.keys is not None and src.keys.shape[2] >= end:
-                            dst.keys = _detached_copy(src.keys[:, :, start:end, :])
-                            dst.values = _detached_copy(src.values[:, :, start:end, :])
-                            dst.offset = segment_len
-                            if hasattr(src, '_idx'):
-                                dst._idx = min(src._idx, end) - start
-                
-                kv_prefix_cache.set_segment_cache(
-                    segment_id, 
-                    all_prompt_tokens[start:end], 
-                    segment_cache, 
-                    content_hash
-                )
-                logger.info(f"Segment '{segment_id}' cache saved: {segment_len} tokens")
 
     if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:
         prefill_tps = kv_prefix_cache.prefill_tps[matched_index]
