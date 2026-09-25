@@ -327,7 +327,7 @@ exo supports several environment variables for configuration:
 | `EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES` | Maximum retained DeepSeek V4 prefix-cache entries. Set to `0` to disable persistence. | `3` |
 | `EXO_PREFILL_MEMORY_RESERVE_GB` | Minimum available system memory to preserve before restoring or storing prefix caches. Defaults to 15% of RAM, bounded to 8-48 GiB. Set to `0` to disable reserve-based eviction. | Adaptive |
 | `EXO_MLX_CACHE_LIMIT_GB` | Maximum MLX allocator cache for reusable free buffers on each worker. Active model and KV memory are not included. | `16` |
-| `EXO_CLEAR_CACHE_DURING_PREFILL` | Release unused MLX allocator buffers after each pipeline-prefill chunk. Set to `0`, `false`, `no`, or `off` to disable for throughput comparison. | `true` |
+| `EXO_CLEAR_CACHE_DURING_PREFILL` | Release unused MLX allocator buffers after each pipeline-prefill chunk. This can reduce peak cached memory but may serialize pipeline work and reduce prefill GPU utilization. Set to `1`, `true`, `yes`, or `on` to enable for memory-pressure experiments. | `false` |
 
 **Example usage:**
 

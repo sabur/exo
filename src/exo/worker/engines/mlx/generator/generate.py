@@ -79,8 +79,8 @@ from exo.worker.engines.mlx.vision import (
 from exo.worker.runner.bootstrap import logger
 
 _CLEAR_CACHE_DURING_PREFILL = os.environ.get(
-    "EXO_CLEAR_CACHE_DURING_PREFILL", "1"
-).lower() not in {"0", "false", "no", "off"}
+    "EXO_CLEAR_CACHE_DURING_PREFILL", "0"
+).lower() in {"1", "true", "yes", "on"}
 
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
