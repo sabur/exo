@@ -160,19 +160,29 @@ def initialize_mlx(
     return mlx_distributed_init(bound_instance)
 
 
+def _configure_mlx_cache_limit() -> None:
+    configured_limit = os.environ.get("EXO_MLX_CACHE_LIMIT_GB")
+    if configured_limit is None:
+        logger.info("MLX allocator cache limit using runtime default")
+        return
+
+    cache_limit_gb = float(configured_limit)
+    if cache_limit_gb < 0:
+        raise ValueError(
+            "EXO_MLX_CACHE_LIMIT_GB must be greater than or equal to zero"
+        )
+
+    mx.set_cache_limit(int(cache_limit_gb * (1 << 30)))
+    logger.info(f"MLX allocator cache limit set to {cache_limit_gb:.1f} GiB")
+
+
 def load_mlx_items(
     bound_instance: BoundInstance,
     group: mx.distributed.Group | None,
 ) -> Generator[
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
-    cache_limit_gb = float(os.environ.get("EXO_MLX_CACHE_LIMIT_GB", "16"))
-    if cache_limit_gb < 0:
-        raise ValueError(
-            "EXO_MLX_CACHE_LIMIT_GB must be greater than or equal to zero"
-        )
-    mx.set_cache_limit(int(cache_limit_gb * (1 << 30)))
-    logger.info(f"MLX allocator cache limit set to {cache_limit_gb:.1f} GiB")
+    _configure_mlx_cache_limit()
 
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
 
