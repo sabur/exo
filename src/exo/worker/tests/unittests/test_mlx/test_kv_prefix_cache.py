@@ -650,6 +650,7 @@ class TestKVPrefix:
         group.rank.return_value = 0
         group.size.return_value = 1
         prompt = mx.arange(9, dtype=mx.int32)
+        prompt_cache = [MagicMock(state=())]
 
         with (
             patch(
@@ -674,7 +675,7 @@ class TestKVPrefix:
             pipeline_parallel_prefill(
                 model=model,
                 prompt=prompt,
-                prompt_cache=[KVCache()],
+                prompt_cache=prompt_cache,
                 prefill_step_size=4,
                 kv_group_size=None,
                 kv_bits=None,
@@ -690,6 +691,7 @@ class TestKVPrefix:
         group = MagicMock()
         group.rank.return_value = 0
         group.size.return_value = 1
+        prompt_cache = [MagicMock(state=())]
 
         with (
             patch(
@@ -714,7 +716,7 @@ class TestKVPrefix:
             pipeline_parallel_prefill(
                 model=model,
                 prompt=mx.arange(9, dtype=mx.int32),
-                prompt_cache=[KVCache()],
+                prompt_cache=prompt_cache,
                 prefill_step_size=4,
                 kv_group_size=None,
                 kv_bits=None,
