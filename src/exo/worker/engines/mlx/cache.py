@@ -4,10 +4,9 @@ import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
-import numpy as np
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
