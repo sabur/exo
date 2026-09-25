@@ -42,7 +42,6 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
-    DeepseekV4Cache,
     KVPrefixCache,
     cache_length,
     copy_snapshot_entry,
@@ -66,6 +65,7 @@ from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
     mx_barrier,
+    system_prompt_token_count,
 )
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
