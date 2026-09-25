@@ -1211,7 +1211,7 @@ class TestKVPrefix:
         assert prefix_cache._entry_telemetry[0] is telemetry_before
         assert prefix_cache._entry_telemetry[0].update_count == 1
 
-    def test_v4_divergent_update_resets_entry_identity_and_telemetry(self):
+    def test_v4_divergent_update_preserves_entry_identity_and_telemetry(self):
         prefix_cache = KVPrefixCache(None)
         prompt = mx.arange(12, dtype=mx.int32)
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
@@ -1230,35 +1230,49 @@ class TestKVPrefix:
             ]
         )
         compacted_cache = [_make_v4_cache(offset=12, pool_rows=3)]
-        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
-            prefix_cache.update_kv_cache(
-                0,
-                compacted_prompt,
-                compacted_cache,
-                [],
-                restore_pos=8,
-            )
+        prefix_cache.update_kv_cache(
+            0,
+            compacted_prompt,
+            compacted_cache,
+            [],
+            restore_pos=8,
+        )
 
         telemetry_after = prefix_cache._entry_telemetry[0]
-        assert telemetry_after is not telemetry_before
-        assert telemetry_after.created_access == prefix_cache._last_used[0]
-        assert telemetry_after.update_count == 0
-        assert telemetry_after.selection_count == 0
-        assert telemetry_after.restore_count == 0
-        assert telemetry_after.cumulative_restored_tokens == 0
-        assert prefix_cache._entry_generations[0] != generation_before
-        replaced = [
-            call.args[0]
-            for call in log_info.call_args_list
-            if call.args and call.args[0].startswith("KV cache lineage replaced")
-        ]
-        assert len(replaced) == 1
-        assert (
-            f"old_entry_id={prefix_cache._instance_id}:{generation_before}"
-            in replaced[0]
+        assert telemetry_after is telemetry_before
+        assert telemetry_after.update_count == 1
+        assert telemetry_after.selection_count == 4
+        assert telemetry_after.restore_count == 3
+        assert telemetry_after.cumulative_restored_tokens == 30
+        assert prefix_cache._entry_generations[0] == generation_before
+
+    def test_v4_eviction_starts_fresh_entry_telemetry(self):
+        prefix_cache = KVPrefixCache(None)
+        first_cache = [_make_v4_cache(offset=12, pool_rows=3)]
+        prefix_cache.add_kv_cache(
+            mx.arange(12, dtype=mx.int32),
+            first_cache,
+            [CacheSnapshot(states=first_cache, token_count=12)],
         )
-        assert "common_prefix=8/12" in replaced[0]
-        assert "selections=4" in replaced[0]
+        telemetry_before = prefix_cache._entry_telemetry[0]
+        telemetry_before.selection_count = 4
+        generation_before = prefix_cache._entry_generations[0]
+
+        second_cache = [_make_v4_cache(offset=24, pool_rows=6)]
+        with patch(
+            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
+        ):
+            prefix_cache.add_kv_cache(
+                mx.arange(24, dtype=mx.int32),
+                second_cache,
+                [CacheSnapshot(states=second_cache, token_count=24)],
+            )
+
+        assert len(prefix_cache._entry_telemetry) == 1
+        telemetry_after = prefix_cache._entry_telemetry[0]
+        assert telemetry_after is not telemetry_before
+        assert telemetry_after.selection_count == 0
+        assert prefix_cache._entry_generations[0] != generation_before
 
     def test_v4_add_initializes_entry_telemetry(self):
         prefix_cache = KVPrefixCache(None)
