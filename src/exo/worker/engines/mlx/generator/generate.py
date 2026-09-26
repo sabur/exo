@@ -373,12 +373,14 @@ def prefill(
         return 0.0, 0, []
 
     prefill_step_size = _PREFILL_STEP_SIZE
-    initial_active_mib, initial_cached_mib, initial_peak_mib = _mlx_memory_mib()
+    initial_active_mib, initial_cached_mib, prior_peak_mib = _mlx_memory_mib()
+    mx.reset_peak_memory()
     logger.info(
         f"[INSTRUMENT] Prefill start: {num_tokens} tokens | "
         f"step={prefill_step_size} | "
         f"Memory: active={initial_active_mib:.1f}MiB, "
-        f"cached={initial_cached_mib:.1f}MiB, peak={initial_peak_mib:.1f}MiB"
+        f"cached={initial_cached_mib:.1f}MiB, "
+        f"prior_peak={prior_peak_mib:.1f}MiB"
     )
 
     logger.debug(f"Prefilling {num_tokens} tokens...")
