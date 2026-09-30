@@ -4,7 +4,7 @@ import time
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import psutil
@@ -171,7 +171,10 @@ def _cache_state_nbytes(state: object | None) -> int:
             if isinstance(entry, mx.array)
         )
     if isinstance(state, CacheList):
-        return sum(_cache_state_nbytes(entry) for entry in state)
+        return sum(
+            _cache_state_nbytes(entry)
+            for entry in cast(list[object], state)
+        )
     return int(getattr(state, "nbytes", 0))
 
 
@@ -1219,7 +1222,7 @@ def _token_window(
 ) -> list[int]:
     start = max(0, position - radius)
     end = min(int(tokens.shape[0]), position + radius)
-    return [int(token) for token in tokens[start:end].tolist()]
+    return cast(list[int], tokens[start:end].tolist())
 
 
 def get_available_memory() -> Memory:

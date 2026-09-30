@@ -874,12 +874,11 @@ class TestKVPrefix:
         with patch(
             "exo.worker.engines.mlx.cache.deepcopy",
             side_effect=RuntimeError("copy failed"),
-        ):
-            with pytest.raises(RuntimeError, match="copy failed"):
-                prefix_cache.add_kv_cache(
-                    mx.arange(4, dtype=mx.int32),
-                    [KVCache()],
-                )
+        ), pytest.raises(RuntimeError, match="copy failed"):
+            prefix_cache.add_kv_cache(
+                mx.arange(4, dtype=mx.int32),
+                [KVCache()],
+            )
 
         lengths = {
             len(prefix_cache.prompts),
@@ -902,18 +901,17 @@ class TestKVPrefix:
         with patch(
             "exo.worker.engines.mlx.cache.deepcopy",
             side_effect=RuntimeError("copy failed"),
-        ):
-            with pytest.raises(RuntimeError, match="copy failed"):
-                prefix_cache.add_kv_cache(
-                    mx.arange(20, dtype=mx.int32),
-                    [_make_v4_cache(offset=20, pool_rows=5)],
-                    [
-                        CacheSnapshot(
-                            states=[_make_v4_cache(offset=20, pool_rows=5)],
-                            token_count=20,
-                        )
-                    ],
-                )
+        ), pytest.raises(RuntimeError, match="copy failed"):
+            prefix_cache.add_kv_cache(
+                mx.arange(20, dtype=mx.int32),
+                [_make_v4_cache(offset=20, pool_rows=5)],
+                [
+                    CacheSnapshot(
+                        states=[_make_v4_cache(offset=20, pool_rows=5)],
+                        token_count=20,
+                    )
+                ],
+            )
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], first_prompt)
