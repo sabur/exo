@@ -208,13 +208,7 @@ def _v4_snapshot_progress_targets(
         return set()
 
     final_token_count = initial_token_count + num_tokens - 1
-    absolute_targets = list(v4_snapshot_landmark_targets(final_token_count))
-    last_chunk_boundary = ((num_tokens - 2) // snapshot_step) * snapshot_step
-    absolute_targets.extend(
-        initial_token_count + last_chunk_boundary - offset * snapshot_step
-        for offset in range(2)
-        if last_chunk_boundary - offset * snapshot_step >= 0
-    )
+    absolute_targets = v4_snapshot_landmark_targets(final_token_count)
 
     progress_targets: set[int] = set()
     for target in absolute_targets:

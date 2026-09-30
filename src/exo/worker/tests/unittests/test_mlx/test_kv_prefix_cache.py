@@ -768,7 +768,7 @@ class TestKVPrefix:
             if snapshots is not None
         ] == [36, 48, 60]
 
-    def test_v4_update_promotes_tail_snapshot_to_logarithmic_landmark(self):
+    def test_v4_update_preserves_restore_boundary_and_frontier_landmarks(self):
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [mx.arange(79_000, dtype=mx.int32)]
         prefix_cache._entry_generations = [1, 2]
@@ -802,7 +802,7 @@ class TestKVPrefix:
             mx.arange(90_000, dtype=mx.int32),
             newer_cache,
             [
-                CacheSnapshot(states=[], token_count=86_000),
+                CacheSnapshot(states=[], token_count=85_000),
                 CacheSnapshot(states=[], token_count=88_000),
                 CacheSnapshot(states=newer_cache, token_count=89_999),
             ],
@@ -811,13 +811,10 @@ class TestKVPrefix:
 
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
-            8_192,
             18_432,
             38_912,
-            78_999,
             80_999,
-            86_000,
-            88_000,
+            85_000,
             89_999,
         ]
 
@@ -926,15 +923,15 @@ class TestKVPrefix:
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [12]
 
-    def test_v4_snapshot_landmarks_scale_logarithmically(self):
-        assert v4_snapshot_landmark_targets(1_000_000) == (
-            10_000,
+    def test_v4_snapshot_landmarks_bias_toward_frontier(self):
+        assert v4_snapshot_landmark_targets(150_000) == (
             20_000,
-            40_000,
-            80_000,
-            160_000,
-            320_000,
-            640_000,
+            50_000,
+            86_000,
+            118_000,
+            134_000,
+            142_000,
+            146_000,
         )
 
     def test_v4_snapshot_plan_uses_absolute_landmarks_after_restore(self):
@@ -950,9 +947,9 @@ class TestKVPrefix:
             initial_token_count=40_000,
             num_tokens=50_001,
             snapshot_step=2_048,
-        ) == {38_912, 47_104, 49_152}
+        ) == {8_192, 16_384, 32_768, 40_960, 45_056}
 
-    def test_v4_prefill_captures_logarithmic_landmarks_and_tail(self):
+    def test_v4_prefill_captures_cold_and_frontier_landmarks(self):
         prompt_tokens = mx.arange(120001, dtype=mx.int32)
         cache = [_make_v4_cache(offset=0, pool_rows=0)]
         model = MagicMock()
@@ -962,12 +959,13 @@ class TestKVPrefix:
             total = len(prompt)
             prompt_progress_callback(0, total)
             for processed in (
-                8192,
                 16384,
-                36864,
-                77824,
+                49152,
+                53248,
+                86016,
+                102400,
+                110592,
                 114688,
-                118784,
             ):
                 prompt_cache[0] = _make_v4_cache(
                     offset=processed,
@@ -1007,17 +1005,93 @@ class TestKVPrefix:
                 distributed_prompt_progress_callback=None,
             )
 
-        assert snapshot_mock.call_count == 7
+        assert snapshot_mock.call_count == 8
         assert [snapshot.token_count for snapshot in snapshots] == [
-            8192,
             16384,
-            36864,
-            77824,
+            49152,
+            53248,
+            86016,
+            102400,
+            110592,
             114688,
-            118784,
             len(prompt_tokens) - 1,
         ]
         assert cache_length(cache) == len(prompt_tokens) - 1
+
+    def test_v4_rebuild_retains_bridge_snapshots_after_deep_restore(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(150_513, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=150_512, pool_rows=37)]
+        prefix_cache.prompts = [mx.arange(141_313, dtype=mx.int32)]
+        prefix_cache._entry_generations = [1]
+        prefix_cache.caches = [
+            [_make_v4_cache(offset=141_312, pool_rows=35)]
+        ]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(states=[], token_count=18_432),
+                CacheSnapshot(states=[], token_count=38_912),
+                CacheSnapshot(states=[], token_count=79_872),
+                CacheSnapshot(states=[], token_count=106_496),
+                CacheSnapshot(states=[], token_count=122_880),
+                CacheSnapshot(states=[], token_count=141_312),
+            ]
+        ]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [1]
+        prefix_cache.prefill_tps = [0.0]
+
+        rebuilt_snapshots = [
+            CacheSnapshot(
+                states=[
+                    _make_v4_cache(
+                        offset=token_count,
+                        pool_rows=token_count // 4096,
+                    )
+                ],
+                token_count=token_count,
+            )
+            for token_count in (
+                86_016,
+                116_736,
+                133_120,
+                141_312,
+                145_408,
+                150_512,
+            )
+        ]
+        prefix_cache.update_kv_cache(
+            0,
+            prompt,
+            cache,
+            rebuilt_snapshots,
+            restore_pos=79_872,
+        )
+
+        assert prefix_cache._snapshots[0] is not None
+        assert [s.token_count for s in prefix_cache._snapshots[0]] == [
+            18_432,
+            38_912,
+            79_872,
+            86_016,
+            116_736,
+            133_120,
+            141_312,
+            145_408,
+            150_512,
+        ]
+
+        query = mx.concatenate([
+            prompt[:146_420],
+            mx.array([999_999], dtype=mx.int32),
+        ])
+        restored, _, matched_index, _ = prefix_cache.get_kv_cache(
+            MagicMock(),
+            query,
+        )
+
+        assert matched_index == 0
+        assert cache_length(restored) == 145_408
 
     def test_prefill_resets_pipeline_flags_after_pipeline_error(self):
         model = MagicMock()

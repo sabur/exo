@@ -88,11 +88,11 @@ _PREFILL_MEMORY_RESERVE_BYTES = int(
     * (1 << 30)
 )
 
-# Retain fixed logarithmic anchors plus four tail-safe rollback points and the
-# exact pre-generation state. The extra tail point prevents an ordinary update
-# from creating a 50K-token restore cliff near large-context boundaries.
-_V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS = 10_000
-_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT = 5
+# Retain sparse cold-context anchors and increasingly dense rollback points
+# behind the current frontier. Normal conversation changes cluster near the
+# tail, while the cold anchors preserve recovery from rarer system/tool changes.
+_V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
+_V4_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000, 32_000, 16_000, 8_000, 4_000)
 _PROMPT_OBSERVATION_LIMIT = 4
 
 
@@ -356,16 +356,22 @@ def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
 
 
 def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
-    targets: list[int] = []
-    target = _V4_PREFIX_CACHE_FIRST_LANDMARK_TOKENS
-    while target < final_token_count:
-        targets.append(target)
-        target *= 2
-    return tuple(targets)
+    targets = {
+        target
+        for target in _V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS
+        if target < final_token_count
+    }
+    targets.update(
+        final_token_count - distance
+        for distance in _V4_PREFIX_CACHE_FRONTIER_DISTANCES
+        if 0 < final_token_count - distance < final_token_count
+    )
+    return tuple(sorted(targets))
 
 
 def _bounded_v4_snapshots(
     snapshots: list[CacheSnapshot] | None,
+    pinned_token_counts: tuple[int, ...] = (),
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
@@ -378,12 +384,14 @@ def _bounded_v4_snapshots(
     )
     selected: dict[int, CacheSnapshot] = {}
     final_token_count = ordered[-1].token_count
-    for target in v4_snapshot_landmark_targets(final_token_count):
+    for target in (
+        *v4_snapshot_landmark_targets(final_token_count),
+        *pinned_token_counts,
+    ):
         snapshot = _find_nearest_snapshot(ordered, target)
         if snapshot is not None:
             selected[snapshot.token_count] = snapshot
-    for snapshot in ordered[-_V4_PREFIX_CACHE_TAIL_SNAPSHOT_COUNT:]:
-        selected[snapshot.token_count] = snapshot
+    selected[ordered[-1].token_count] = ordered[-1]
     return sorted(selected.values(), key=lambda snapshot: snapshot.token_count)
 
 
@@ -602,7 +610,10 @@ class KVPrefixCache:
                 if snapshot.token_count <= restore_pos
             ]
             eligible.extend(snapshots or [])
-            stored_snapshots = _bounded_v4_snapshots(eligible)
+            stored_snapshots = _bounded_v4_snapshots(
+                eligible,
+                pinned_token_counts=(restore_pos,) if restore_pos > 0 else (),
+            )
         else:
             merged: list[CacheSnapshot] = []
             if old_snapshots:
