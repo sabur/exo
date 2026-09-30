@@ -818,7 +818,7 @@ class TestKVPrefix:
             89_999,
         ]
 
-    def test_v4_retains_fifth_tail_checkpoint_before_large_context_frontier(
+    def test_v4_retains_sparse_cold_and_frontier_checkpoints(
         self,
     ):
         prefix_cache = KVPrefixCache(None)
@@ -844,15 +844,12 @@ class TestKVPrefix:
 
         assert prefix_cache._snapshots[0] is not None
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
-            8_192,
             16_384,
             36_864,
             77_824,
             159_744,
-            208_896,
             212_992,
             217_088,
-            221_184,
             221_542,
         ]
 
@@ -985,6 +982,10 @@ class TestKVPrefix:
             yield object()
 
         with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate._PREFILL_STEP_SIZE",
+                4_096,
+            ),
             patch(
                 "exo.worker.engines.mlx.generator.generate.stream_generate",
                 new=fake_stream_generate,

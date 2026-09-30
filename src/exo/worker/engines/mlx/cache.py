@@ -93,6 +93,7 @@ _PREFILL_MEMORY_RESERVE_BYTES = int(
 # tail, while the cold anchors preserve recovery from rarer system/tool changes.
 _V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
 _V4_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000, 32_000, 16_000, 8_000, 4_000)
+_V4_PREFIX_CACHE_SMALL_CONTEXT_TOKENS = 20_000
 _PROMPT_OBSERVATION_LIMIT = 4
 
 
@@ -361,6 +362,11 @@ def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
         for target in _V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS
         if target < final_token_count
     }
+    if final_token_count < _V4_PREFIX_CACHE_SMALL_CONTEXT_TOKENS:
+        targets.update(
+            final_token_count * numerator // 4
+            for numerator in range(1, 4)
+        )
     targets.update(
         final_token_count - distance
         for distance in _V4_PREFIX_CACHE_FRONTIER_DISTANCES
