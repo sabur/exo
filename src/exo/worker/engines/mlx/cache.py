@@ -173,7 +173,7 @@ def _cache_state_nbytes(state: object | None) -> int:
     if isinstance(state, CacheList):
         return sum(
             _cache_state_nbytes(entry)
-            for entry in cast(list[object], state)
+            for entry in cast(list[object], cast(object, state))
         )
     return int(getattr(state, "nbytes", 0))
 
