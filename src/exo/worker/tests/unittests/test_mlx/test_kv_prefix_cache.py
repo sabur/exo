@@ -10,8 +10,14 @@ from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 from mlx_lm.sample_utils import make_sampler
 from mlx_vlm.models.cache import (
     ArraysCache as VlmArraysCache,
+)
+from mlx_vlm.models.cache import (
     CacheList as VlmCacheList,
+)
+from mlx_vlm.models.cache import (
     KVCache as VlmKVCache,
+)
+from mlx_vlm.models.cache import (
     PoolingCache as VlmPoolingCache,
 )
 

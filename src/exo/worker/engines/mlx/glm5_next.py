@@ -1,11 +1,23 @@
+from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_vlm.models.glm5_next import LanguageModel
 from mlx_vlm.models.glm5_next.language import Glm5NextTextModel
-from mlx_vlm.utils import load_model as load_vlm_model
+
+
+class _LanguageModelOutput(Protocol):
+    logits: mx.array
+
+
+class _VlmUtils(Protocol):
+    load_model: Callable[..., nn.Module]
+
+
+vlm_utils = cast(_VlmUtils, import_module("mlx_vlm.utils"))
 
 
 class Glm5NextModel(nn.Module):
@@ -24,29 +36,28 @@ class Glm5NextModel(nn.Module):
     def layers(self) -> list[nn.Module]:
         return cast(list[nn.Module], self.language_model.layers)
 
-    def make_cache(self) -> list[Any]:
-        return self.language_model.make_cache()
+    def make_cache(self) -> list[object]:
+        return cast(list[object], self.language_model.make_cache())
 
     def __call__(
         self,
         inputs: mx.array,
-        cache: list[Any] | None = None,
+        cache: list[object] | None = None,
         input_embeddings: mx.array | None = None,
-        **kwargs: Any,
     ) -> mx.array:
-        output = self.language_model(
-            inputs,
-            cache=cache,
-            inputs_embeds=input_embeddings,
-            **kwargs,
+        output = cast(
+            _LanguageModelOutput,
+            self.language_model(
+                inputs,
+                cache=cache,
+                inputs_embeds=input_embeddings,
+            ),
         )
-        if output.logits is None:
-            raise RuntimeError("GLM-5-Next language model returned no logits")
         return output.logits
 
 
 def load_glm5_next_model(model_path: Path, *, lazy: bool) -> Glm5NextModel:
-    model = load_vlm_model(model_path, lazy=lazy)
+    model = vlm_utils.load_model(model_path, lazy=lazy)
     language_model = getattr(model, "language_model", None)
     if not isinstance(language_model, LanguageModel):
         raise TypeError(

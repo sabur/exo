@@ -10,6 +10,18 @@ from mlx_lm.models.cache import (
     RotatingKVCache,
 )
 from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
+from mlx_vlm.models.cache import (
+    ArraysCache as VlmArraysCache,
+)
+from mlx_vlm.models.cache import (
+    CacheList as VlmCacheList,
+)
+from mlx_vlm.models.cache import (
+    KVCache as VlmKVCache,
+)
+from mlx_vlm.models.cache import (
+    PoolingCache as VlmPoolingCache,
+)
 
 from exo.worker.disaggregated.protocol import (
     DType,
@@ -101,7 +113,16 @@ def send_mlx_kv_cache(
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
         match c:
-            case QuantizedKVCache() | CacheList() | DeepseekV4Cache():
+            case (
+                QuantizedKVCache()
+                | ArraysCache()
+                | CacheList()
+                | DeepseekV4Cache()
+                | VlmArraysCache()
+                | VlmCacheList()
+                | VlmKVCache()
+                | VlmPoolingCache()
+            ):
                 raise NotImplementedError
             case KVCache() | RotatingKVCache():
                 keys = c.keys

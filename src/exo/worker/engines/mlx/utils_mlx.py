@@ -73,7 +73,7 @@ def _load_text_model(model_path: Path, *, lazy: bool) -> nn.Module:
     config_path = model_path / "config.json"
     if config_path.exists():
         with open(config_path) as f:
-            config = json.load(f)
+            config = cast(dict[str, object], json.load(f))
         if config.get("model_type") == "glm5_next":
             return load_glm5_next_model(model_path, lazy=lazy)
 

@@ -61,6 +61,7 @@ from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 from mlx_vlm.models.glm5_next.language import (
+    DecoderLayer as Glm5NextDecoderLayer,
     Glm5NextAttention,
     Glm5NextLinearAttention,
     Glm5NextMLP,
@@ -99,9 +100,7 @@ class _LayerCallable(Protocol):
     protocol matches the vast majority of `mlx.nn.Module` subclasses.
     """
 
-    def __call__(
-        self, x: mx.array, *args: object, **kwargs: object
-    ) -> mx.array | tuple[mx.array, object]: ...
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
 
 
 class CustomMlxLayer(nn.Module):
@@ -138,9 +137,7 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.group = group
         self.is_prefill: bool = False
 
-    def __call__(
-        self, x: mx.array, *args: object, **kwargs: object
-    ) -> mx.array | tuple[mx.array, object]:
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
@@ -166,16 +163,14 @@ class PipelineLastLayer(CustomMlxLayer):
         self.is_prefill: bool = False
         self.queue_sends: bool = False
 
-    def __call__(
-        self, x: mx.array, *args: object, **kwargs: object
-    ) -> mx.array | tuple[mx.array, object]:
+    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        layer_output = self.original_layer(x, *args, **kwargs)
+        layer_output = cast(object, self.original_layer(x, *args, **kwargs))
         if isinstance(layer_output, tuple):
-            output, auxiliary = layer_output
+            output, auxiliary = cast(tuple[mx.array, object], layer_output)
         else:
             output = layer_output
             auxiliary = None
@@ -210,7 +205,7 @@ class PipelineLastLayer(CustomMlxLayer):
             mx.eval(output)
 
         if isinstance(layer_output, tuple):
-            return output, auxiliary
+            return cast(mx.array, (output, auxiliary))
         return output
 
 
@@ -1021,6 +1016,7 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
         )
         sharded_fbg.weight = fbg.weight[indices]
         if "bias" in fbg:
+            assert fbg.bias is not None
             sharded_fbg.bias = fbg.bias[indices]
         attention.fbg_a_proj = sharded_fbg
 
@@ -1078,7 +1074,8 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
             raise ValueError(
                 "GLM-5-Next attention heads must be divisible by the world size"
             )
-        for i, layer in enumerate(model.layers):
+        for i, raw_layer in enumerate(model.layers):
+            layer = cast(Glm5NextDecoderLayer, raw_layer)
             mx.eval(layer.parameters())
 
             if isinstance(layer.self_attn, Glm5NextLinearAttention):
@@ -1101,7 +1098,7 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj
                 )
-                layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
+                layer.mlp = ShardedMoE(layer.mlp)
                 layer.mlp.sharding_group = self.group
             elif isinstance(layer.mlp, Glm5NextMLP):
                 self._shard_gate_up(layer.mlp)

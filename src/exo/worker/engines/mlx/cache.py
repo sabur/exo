@@ -2,9 +2,10 @@ import gc
 import os
 import time
 import uuid
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import mlx.core as mx
 import psutil
@@ -24,8 +25,14 @@ from mlx_lm.models.deepseek_v4 import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from mlx_vlm.models.cache import (
     ArraysCache as VlmArraysCache,
+)
+from mlx_vlm.models.cache import (
     CacheList as VlmCacheList,
+)
+from mlx_vlm.models.cache import (
     KVCache as VlmKVCache,
+)
+from mlx_vlm.models.cache import (
     PoolingCache as VlmPoolingCache,
 )
 
@@ -36,6 +43,24 @@ from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import MediaRegion
+
+
+class _VlmPrefixCache(Protocol):
+    def prefix_cache_snapshot(self) -> object: ...
+
+    def prefix_cache_restore(self, snapshot: object) -> None: ...
+
+
+class _VlmArraysCacheView(_VlmPrefixCache, Protocol):
+    cache: list[object]
+
+
+class _VlmPoolingCacheView(_VlmPrefixCache, Protocol):
+    ratio: int
+
+
+class _VlmCacheListView(Protocol):
+    caches: tuple[object, ...] | list[object]
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -199,7 +224,7 @@ def _cache_state_nbytes(state: object | None) -> int:
         state,
         (VlmArraysCache, VlmCacheList, VlmKVCache, VlmPoolingCache),
     ):
-        return int(state.nbytes)
+        return int(state.nbytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     return int(getattr(state, "nbytes", 0))
 
 
@@ -258,7 +283,7 @@ def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
 
 
 def _copy_cache_list(cl: CacheList) -> CacheList:
-    inners: list[object] = list(cl)  # type: ignore[reportUnknownArgumentType]
+    inners = cast(list[object], list(cl.caches))
     copied: list[object] = []
     for inner in inners:
         if isinstance(inner, RotatingKVCache):
@@ -277,11 +302,20 @@ def _detached_copy_tree(value: object) -> object:
         mx.eval(copied)
         return copied
     if isinstance(value, list):
-        return [_detached_copy_tree(item) for item in value]
+        return [
+            _detached_copy_tree(item)
+            for item in cast(list[object], value)
+        ]
     if isinstance(value, tuple):
-        return tuple(_detached_copy_tree(item) for item in value)
+        return tuple(
+            _detached_copy_tree(item)
+            for item in cast(tuple[object, ...], value)
+        )
     if isinstance(value, dict):
-        return {key: _detached_copy_tree(item) for key, item in value.items()}
+        return {
+            key: _detached_copy_tree(item)
+            for key, item in cast(dict[object, object], value).items()
+        }
     return deepcopy(value)
 
 
@@ -289,32 +323,34 @@ def _copy_vlm_cache(
     cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
 ) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
     if isinstance(cache, VlmCacheList):
+        cache_list = cast(_VlmCacheListView, cache)
         return VlmCacheList(
             *[
-                _copy_vlm_cache(inner)
-                for inner in cast(
-                    list[
+                _copy_vlm_cache(
+                    cast(
                         VlmArraysCache
                         | VlmCacheList
                         | VlmKVCache
-                        | VlmPoolingCache
-                    ],
-                    list(cache),
+                        | VlmPoolingCache,
+                        inner,
+                    )
                 )
+                for inner in cache_list.caches
             ]
         )
 
+    prefix_cache = cast(_VlmPrefixCache, cache)
     snapshot = cast(
         dict[str, object],
-        _detached_copy_tree(cache.prefix_cache_snapshot()),
+        _detached_copy_tree(prefix_cache.prefix_cache_snapshot()),
     )
     if isinstance(cache, VlmArraysCache):
-        copied = VlmArraysCache(len(cache.cache))
+        copied = VlmArraysCache(len(cast(_VlmArraysCacheView, cache).cache))
     elif isinstance(cache, VlmPoolingCache):
-        copied = VlmPoolingCache(cache.ratio)
+        copied = VlmPoolingCache(cast(_VlmPoolingCacheView, cache).ratio)
     else:
         copied = VlmKVCache()
-    copied.prefix_cache_restore(snapshot)
+    cast(_VlmPrefixCache, copied).prefix_cache_restore(snapshot)
     return copied
 
 
@@ -322,22 +358,23 @@ def _empty_vlm_cache(
     cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
 ) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
     if isinstance(cache, VlmArraysCache):
-        return VlmArraysCache(len(cache.cache))
+        return VlmArraysCache(len(cast(_VlmArraysCacheView, cache).cache))
     if isinstance(cache, VlmPoolingCache):
-        return VlmPoolingCache(cache.ratio)
+        return VlmPoolingCache(cast(_VlmPoolingCacheView, cache).ratio)
     if isinstance(cache, VlmCacheList):
+        cache_list = cast(_VlmCacheListView, cache)
         return VlmCacheList(
             *[
-                _empty_vlm_cache(inner)
-                for inner in cast(
-                    list[
+                _empty_vlm_cache(
+                    cast(
                         VlmArraysCache
                         | VlmCacheList
                         | VlmKVCache
-                        | VlmPoolingCache
-                    ],
-                    list(cache),
+                        | VlmPoolingCache,
+                        inner,
+                    )
                 )
+                for inner in cache_list.caches
             ]
         )
     return VlmKVCache()
@@ -390,6 +427,8 @@ def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
 def copy_snapshot_entry(
     entry: (
         ArraysCache
+        | KVCache
+        | QuantizedKVCache
         | RotatingKVCache
         | CacheList
         | DeepseekV4Cache
@@ -401,6 +440,8 @@ def copy_snapshot_entry(
     ),
 ) -> (
     ArraysCache
+    | KVCache
+    | QuantizedKVCache
     | RotatingKVCache
     | CacheList
     | DeepseekV4Cache
@@ -417,6 +458,8 @@ def copy_snapshot_entry(
         return snap if snap is not None else deepcopy(entry)
     if isinstance(entry, ArraysCache):
         return _copy_arrays_cache(entry)
+    if isinstance(entry, (KVCache, QuantizedKVCache)):
+        return deepcopy(entry)
     if isinstance(entry, CacheList):
         return _copy_cache_list(entry)
     if isinstance(entry, DeepseekV4Cache):
@@ -1416,7 +1459,12 @@ def trim_cache(
                             inner.offset = 0
                             inner._idx = 0
         else:
-            c.trim(num_tokens)
+            trim_cache_entry(c, num_tokens)
+
+
+def trim_cache_entry(cache: object, num_tokens: int) -> int:
+    trim = cast(Callable[[int], int], getattr(cache, "trim"))
+    return trim(num_tokens)
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
@@ -1444,11 +1492,13 @@ def _entry_length(
     | VlmPoolingCache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
-    if hasattr(c, "offset"):
-        return c.offset
+    offset = cast(object, getattr(c, "offset", None))
+    if isinstance(offset, int):
+        return offset
     # For CacheList
-    if hasattr(c, "size"):
-        return int(c.size())  # type: ignore
+    size = cast(object, getattr(c, "size", None))
+    if callable(size):
+        return cast(Callable[[], int], size)()
     return 0
 
 
