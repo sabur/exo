@@ -8,6 +8,8 @@ import mlx.nn as nn
 from mlx_vlm.models.glm5_next import LanguageModel
 from mlx_vlm.models.glm5_next.language import Glm5NextTextModel
 
+from exo.worker.engines.mlx.types import KVCacheType
+
 
 class _LanguageModelOutput(Protocol):
     logits: mx.array
@@ -36,13 +38,13 @@ class Glm5NextModel(nn.Module):
     def layers(self) -> list[nn.Module]:
         return cast(list[nn.Module], self.language_model.layers)
 
-    def make_cache(self) -> list[object]:
-        return cast(list[object], self.language_model.make_cache())
+    def make_cache(self) -> KVCacheType:
+        return cast(KVCacheType, self.language_model.make_cache())
 
     def __call__(
         self,
         inputs: mx.array,
-        cache: list[object] | None = None,
+        cache: KVCacheType | None = None,
         input_embeddings: mx.array | None = None,
     ) -> mx.array:
         output = cast(

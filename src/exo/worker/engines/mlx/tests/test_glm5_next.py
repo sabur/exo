@@ -8,6 +8,7 @@ from mlx_vlm.models.glm5_next import LanguageModel, TextConfig
 
 from exo.worker.engines.mlx import glm5_next
 from exo.worker.engines.mlx.cache import cache_length
+from exo.worker.engines.mlx.types import KVCacheType
 
 
 @dataclass
@@ -38,7 +39,7 @@ class _FakeLanguageModel:
     def __call__(
         self,
         inputs: mx.array,
-        cache: list[object] | None = None,
+        cache: KVCacheType | None = None,
         inputs_embeds: mx.array | None = None,
     ) -> _FakeOutput:
         del cache, inputs_embeds
