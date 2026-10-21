@@ -1067,14 +1067,6 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
         attention.unembed_out.apply(shard_heads)
         attention.num_heads = local_heads
 
-        if attention.indexer is not None:
-            indexer = attention.indexer
-            indexer.wq_b = self.all_to_sharded_linear(indexer.wq_b)
-            indexer.weights_proj = self.all_to_sharded_linear(
-                indexer.weights_proj
-            )
-            indexer.n_heads //= self.N
-
     def shard_model(
         self,
         model: nn.Module,
@@ -1086,11 +1078,6 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
             raise ValueError(
                 "GLM-5-Next attention heads must be divisible by the world size"
             )
-        if model.language_model.config.index_n_heads % self.N:
-            raise ValueError(
-                "GLM-5-Next index heads must be divisible by the world size"
-            )
-
         for i, layer in enumerate(model.layers):
             mx.eval(layer.parameters())
 

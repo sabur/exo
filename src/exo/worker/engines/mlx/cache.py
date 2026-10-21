@@ -494,11 +494,18 @@ def has_glm5_next_cache(cache: KVCacheType) -> bool:
     )
 
 
-def _copy_cache_sequence(cache: KVCacheType) -> list[object]:
-    return [
-        copied if (copied := copy_snapshot_entry(entry)) is not None else deepcopy(entry)
-        for entry in cache
-    ]
+def _copy_cache_sequence(cache: KVCacheType) -> KVCacheType:
+    return cast(
+        KVCacheType,
+        [
+            (
+                copied
+                if (copied := copy_snapshot_entry(entry)) is not None
+                else deepcopy(entry)
+            )
+            for entry in cache
+        ],
+    )
 
 
 def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
