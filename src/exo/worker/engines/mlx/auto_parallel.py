@@ -1085,9 +1085,7 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
             if isinstance(layer.self_attn, Glm5NextLinearAttention):
                 self._shard_linear_attention(layer.self_attn)
             else:
-                self._shard_sparse_attention(
-                    cast(Glm5NextAttention, layer.self_attn)
-                )
+                self._shard_sparse_attention(layer.self_attn)
 
             if isinstance(layer.mlp, Glm5NextMoE):
                 self._shard_gate_up(layer.mlp.shared_experts)
@@ -1102,9 +1100,10 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 )
                 sharded_mlp = ShardedMoE(layer.mlp)
                 sharded_mlp.sharding_group = self.group
-                dict.__setitem__(layer, "mlp", sharded_mlp)
+                layer_items = cast(dict[str, object], cast(object, layer))
+                layer_items["mlp"] = sharded_mlp
             else:
-                self._shard_gate_up(cast(Glm5NextMLP, layer.mlp))
+                self._shard_gate_up(layer.mlp)
 
             mx.eval(layer)
             mx.clear_cache()
