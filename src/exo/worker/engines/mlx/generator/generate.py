@@ -61,6 +61,7 @@ from exo.worker.engines.mlx.constants import (
     KV_BITS,
     KV_GROUP_SIZE,
     MAX_TOKENS,
+    PREFILL_STEP_SIZE,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.types import KVCacheType, Model
@@ -83,26 +84,6 @@ _CLEAR_CACHE_DURING_PREFILL = os.environ.get(
     "EXO_CLEAR_CACHE_DURING_PREFILL", "1"
 ).lower() not in {"0", "false", "no", "off"}
 
-
-def _parse_prefill_step_size(value: str | None) -> int:
-    if value is None:
-        return 4096
-
-    try:
-        step_size = int(value)
-    except ValueError as exc:
-        raise ValueError("EXO_PREFILL_STEP_SIZE must be an integer") from exc
-
-    if step_size < 4 or step_size % 4 != 0:
-        raise ValueError(
-            "EXO_PREFILL_STEP_SIZE must be at least 4 and divisible by 4"
-        )
-    return step_size
-
-
-_PREFILL_STEP_SIZE = _parse_prefill_step_size(
-    os.environ.get("EXO_PREFILL_STEP_SIZE")
-)
 
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
@@ -392,7 +373,7 @@ def prefill(
     if num_tokens == 0:
         return 0.0, 0, []
 
-    prefill_step_size = _PREFILL_STEP_SIZE
+    prefill_step_size = PREFILL_STEP_SIZE
     initial_active_mib, initial_cached_mib, prior_peak_mib = _mlx_memory_mib()
     mx.reset_peak_memory()
     logger.info(

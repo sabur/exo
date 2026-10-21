@@ -1065,7 +1065,7 @@ class TestKVPrefix:
 
         with (
             patch(
-                "exo.worker.engines.mlx.generator.generate._PREFILL_STEP_SIZE",
+                "exo.worker.engines.mlx.generator.generate.PREFILL_STEP_SIZE",
                 4_096,
             ),
             patch(
