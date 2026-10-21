@@ -46,6 +46,7 @@ from exo.worker.engines.mlx.cache import (
     cache_length,
     copy_snapshot_entry,
     encode_prompt,
+    glm5_snapshot_landmark_targets,
     has_deepseek_v4_cache,
     has_glm5_next_cache,
     has_non_kv_caches,
@@ -210,6 +211,29 @@ def _v4_snapshot_progress_targets(
 
     final_token_count = initial_token_count + num_tokens - 1
     absolute_targets = v4_snapshot_landmark_targets(final_token_count)
+
+    progress_targets: set[int] = set()
+    for target in absolute_targets:
+        if target <= initial_token_count:
+            continue
+        aligned_progress = (
+            (target - initial_token_count) // snapshot_step
+        ) * snapshot_step
+        if 0 < aligned_progress < num_tokens - 1:
+            progress_targets.add(aligned_progress)
+    return progress_targets
+
+
+def _glm5_snapshot_progress_targets(
+    initial_token_count: int,
+    num_tokens: int,
+    snapshot_step: int,
+) -> set[int]:
+    if num_tokens <= 1:
+        return set()
+
+    final_token_count = initial_token_count + num_tokens - 1
+    absolute_targets = glm5_snapshot_landmark_targets(final_token_count)
 
     progress_targets: set[int] = set()
     for target in absolute_targets:
@@ -393,10 +417,18 @@ def prefill(
     initial_snapshot_token_count = (
         cache_length(cache) if has_bounded_snapshots else 0
     )
-    bounded_snapshot_targets = _v4_snapshot_progress_targets(
-        initial_snapshot_token_count,
-        num_tokens,
-        snapshot_step,
+    bounded_snapshot_targets = (
+        _v4_snapshot_progress_targets(
+            initial_snapshot_token_count,
+            num_tokens,
+            snapshot_step,
+        )
+        if has_v4
+        else _glm5_snapshot_progress_targets(
+            initial_snapshot_token_count,
+            num_tokens,
+            snapshot_step,
+        )
     )
     snapshots: list[CacheSnapshot] = []
     landmark_snapshots: list[CacheSnapshot] = []

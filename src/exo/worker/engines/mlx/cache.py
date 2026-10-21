@@ -103,6 +103,9 @@ _PREFILL_MEMORY_RESERVE_BYTES = int(
 _V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
 _V4_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000, 32_000, 16_000, 8_000, 4_000)
 _V4_PREFIX_CACHE_SMALL_CONTEXT_TOKENS = 20_000
+_GLM5_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
+_GLM5_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000,)
+_GLM5_PREFIX_CACHE_SMALL_CONTEXT_TOKENS = 20_000
 _PROMPT_OBSERVATION_LIMIT = 4
 
 
@@ -487,11 +490,7 @@ def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
 
 
 def has_glm5_next_cache(cache: KVCacheType) -> bool:
-    return any(
-        isinstance(c, VlmCacheList)
-        and any(isinstance(inner, VlmPoolingCache) for inner in c.caches)
-        for c in cache
-    )
+    return any(isinstance(c, (VlmArraysCache, VlmCacheList)) for c in cache)
 
 
 def _copy_cache_sequence(cache: KVCacheType) -> KVCacheType:
@@ -527,8 +526,28 @@ def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
     return tuple(sorted(targets))
 
 
-def _bounded_v4_snapshots(
+def glm5_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
+    targets = {
+        target
+        for target in _GLM5_PREFIX_CACHE_COLD_LANDMARK_TOKENS
+        if target < final_token_count
+    }
+    if final_token_count < _GLM5_PREFIX_CACHE_SMALL_CONTEXT_TOKENS:
+        targets.update(
+            final_token_count * numerator // 4
+            for numerator in range(1, 4)
+        )
+    targets.update(
+        final_token_count - distance
+        for distance in _GLM5_PREFIX_CACHE_FRONTIER_DISTANCES
+        if 0 < final_token_count - distance < final_token_count
+    )
+    return tuple(sorted(targets))
+
+
+def _bounded_snapshots(
     snapshots: list[CacheSnapshot] | None,
+    targets: tuple[int, ...],
     pinned_token_counts: tuple[int, ...] = (),
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
@@ -541,16 +560,40 @@ def _bounded_v4_snapshots(
         key=lambda snapshot: snapshot.token_count,
     )
     selected: dict[int, CacheSnapshot] = {}
-    final_token_count = ordered[-1].token_count
-    for target in (
-        *v4_snapshot_landmark_targets(final_token_count),
-        *pinned_token_counts,
-    ):
+    for target in (*targets, *pinned_token_counts):
         snapshot = _find_nearest_snapshot(ordered, target)
         if snapshot is not None:
             selected[snapshot.token_count] = snapshot
     selected[ordered[-1].token_count] = ordered[-1]
     return sorted(selected.values(), key=lambda snapshot: snapshot.token_count)
+
+
+def _bounded_v4_snapshots(
+    snapshots: list[CacheSnapshot] | None,
+    pinned_token_counts: tuple[int, ...] = (),
+) -> list[CacheSnapshot] | None:
+    if not snapshots:
+        return None
+    final_token_count = max(snapshot.token_count for snapshot in snapshots)
+    return _bounded_snapshots(
+        snapshots,
+        v4_snapshot_landmark_targets(final_token_count),
+        pinned_token_counts,
+    )
+
+
+def _bounded_glm5_snapshots(
+    snapshots: list[CacheSnapshot] | None,
+    pinned_token_counts: tuple[int, ...] = (),
+) -> list[CacheSnapshot] | None:
+    if not snapshots:
+        return None
+    final_token_count = max(snapshot.token_count for snapshot in snapshots)
+    return _bounded_snapshots(
+        snapshots,
+        glm5_snapshot_landmark_targets(final_token_count),
+        pinned_token_counts,
+    )
 
 
 def _log_v4_snapshot_retention(snapshots: list[CacheSnapshot]) -> None:
@@ -680,11 +723,12 @@ class KVPrefixCache:
         store_start = time.perf_counter()
         stored_cache = _copy_cache_sequence(cache)
         store_ms = (time.perf_counter() - store_start) * 1000
-        stored_snapshots = (
-            _bounded_v4_snapshots(ssm_snapshots)
-            if is_v4 or is_glm5
-            else ssm_snapshots
-        )
+        if is_v4:
+            stored_snapshots = _bounded_v4_snapshots(ssm_snapshots)
+        elif is_glm5:
+            stored_snapshots = _bounded_glm5_snapshots(ssm_snapshots)
+        else:
+            stored_snapshots = ssm_snapshots
 
         access_counter = self._access_counter + 1
         start_length = len(self.prompts)
@@ -780,9 +824,11 @@ class KVPrefixCache:
                 if snapshot.token_count <= restore_pos
             ]
             eligible.extend(snapshots or [])
-            stored_snapshots = _bounded_v4_snapshots(
-                eligible,
-                pinned_token_counts=(restore_pos,) if restore_pos > 0 else (),
+            pin = (restore_pos,) if restore_pos > 0 else ()
+            stored_snapshots = (
+                _bounded_v4_snapshots(eligible, pinned_token_counts=pin)
+                if is_v4
+                else _bounded_glm5_snapshots(eligible, pinned_token_counts=pin)
             )
         else:
             merged: list[CacheSnapshot] = []

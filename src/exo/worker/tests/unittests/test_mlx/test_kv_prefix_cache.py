@@ -23,6 +23,7 @@ from exo.worker.engines.mlx.cache import (
     cache_length,
     encode_prompt,
     get_prefix_length,
+    glm5_snapshot_landmark_targets,
     has_glm5_next_cache,
     make_kv_cache,
     snapshot_ssm_states,
@@ -30,6 +31,7 @@ from exo.worker.engines.mlx.cache import (
     v4_snapshot_landmark_targets,
 )
 from exo.worker.engines.mlx.generator.generate import (
+    _glm5_snapshot_progress_targets,
     _v4_snapshot_progress_targets,
     mlx_generate,
     pipeline_parallel_prefill,
@@ -990,6 +992,20 @@ class TestKVPrefix:
             142_000,
             146_000,
         )
+
+    def test_glm5_snapshot_landmarks_bound_long_context_memory(self):
+        assert glm5_snapshot_landmark_targets(150_000) == (
+            20_000,
+            50_000,
+            86_000,
+        )
+
+    def test_glm5_snapshot_plan_keeps_one_frontier_checkpoint(self):
+        assert _glm5_snapshot_progress_targets(
+            initial_token_count=40_000,
+            num_tokens=50_001,
+            snapshot_step=2_048,
+        ) == {8_192}
 
     def test_v4_snapshot_plan_uses_absolute_landmarks_after_restore(self):
         assert (
