@@ -294,7 +294,8 @@ def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
 
 
 def _copy_cache_list(cl: CacheList) -> CacheList:
-    inners = cast(list[object], list(cl.caches))
+    cache_list = cast(_VlmCacheListView, cast(object, cl))
+    inners = list(cache_list.caches)
     copied: list[object] = []
     for inner in inners:
         if isinstance(inner, RotatingKVCache):
@@ -334,7 +335,7 @@ def _copy_vlm_cache(
     cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
 ) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
     if isinstance(cache, VlmCacheList):
-        cache_list = cast(_VlmCacheListView, cache)
+        cache_list = cast(_VlmCacheListView, cast(object, cache))
         return VlmCacheList(
             *[
                 _copy_vlm_cache(
@@ -356,9 +357,11 @@ def _copy_vlm_cache(
         _detached_copy_tree(prefix_cache.prefix_cache_snapshot()),
     )
     if isinstance(cache, VlmArraysCache):
-        copied = VlmArraysCache(len(cast(_VlmArraysCacheView, cache).cache))
+        cache_view = cast(_VlmArraysCacheView, cast(object, cache))
+        copied = VlmArraysCache(len(cache_view.cache))
     elif isinstance(cache, VlmPoolingCache):
-        copied = VlmPoolingCache(cast(_VlmPoolingCacheView, cache).ratio)
+        cache_view = cast(_VlmPoolingCacheView, cast(object, cache))
+        copied = VlmPoolingCache(cache_view.ratio)
     else:
         copied = VlmKVCache()
     cast(_VlmPrefixCache, copied).prefix_cache_restore(snapshot)
@@ -369,11 +372,13 @@ def _empty_vlm_cache(
     cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
 ) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
     if isinstance(cache, VlmArraysCache):
-        return VlmArraysCache(len(cast(_VlmArraysCacheView, cache).cache))
+        cache_view = cast(_VlmArraysCacheView, cast(object, cache))
+        return VlmArraysCache(len(cache_view.cache))
     if isinstance(cache, VlmPoolingCache):
-        return VlmPoolingCache(cast(_VlmPoolingCacheView, cache).ratio)
+        cache_view = cast(_VlmPoolingCacheView, cast(object, cache))
+        return VlmPoolingCache(cache_view.ratio)
     if isinstance(cache, VlmCacheList):
-        cache_list = cast(_VlmCacheListView, cache)
+        cache_list = cast(_VlmCacheListView, cast(object, cache))
         return VlmCacheList(
             *[
                 _empty_vlm_cache(

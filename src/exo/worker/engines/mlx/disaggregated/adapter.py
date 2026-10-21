@@ -115,7 +115,6 @@ def send_mlx_kv_cache(
         match c:
             case (
                 QuantizedKVCache()
-                | ArraysCache()
                 | CacheList()
                 | DeepseekV4Cache()
                 | VlmArraysCache()

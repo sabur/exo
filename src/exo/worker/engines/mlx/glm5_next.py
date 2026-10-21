@@ -17,7 +17,7 @@ class _VlmUtils(Protocol):
     load_model: Callable[..., nn.Module]
 
 
-vlm_utils = cast(_VlmUtils, import_module("mlx_vlm.utils"))
+vlm_utils = cast(_VlmUtils, cast(object, import_module("mlx_vlm.utils")))
 
 
 class Glm5NextModel(nn.Module):

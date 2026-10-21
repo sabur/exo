@@ -172,9 +172,11 @@ class PipelineLastLayer(CustomMlxLayer):
 
         layer_output = cast(object, self.original_layer(x, *args, **kwargs))
         if isinstance(layer_output, tuple):
-            output, auxiliary = cast(tuple[mx.array, object], layer_output)
+            pair = cast(tuple[object, object], layer_output)
+            output = cast(mx.array, pair[0])
+            auxiliary = pair[1]
         else:
-            output = layer_output
+            output = cast(mx.array, layer_output)
             auxiliary = None
 
         # Eval layer output to materialize it before send — this splits the graph
@@ -207,7 +209,7 @@ class PipelineLastLayer(CustomMlxLayer):
             mx.eval(output)
 
         if isinstance(layer_output, tuple):
-            return cast(mx.array, (output, auxiliary))
+            return cast(mx.array, cast(object, (output, auxiliary)))
         return output
 
 
@@ -1082,11 +1084,9 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(layer.self_attn, Glm5NextLinearAttention):
                 self._shard_linear_attention(layer.self_attn)
-            elif isinstance(layer.self_attn, Glm5NextAttention):
-                self._shard_sparse_attention(layer.self_attn)
             else:
-                raise TypeError(
-                    f"Unsupported GLM-5-Next attention {type(layer.self_attn)}"
+                self._shard_sparse_attention(
+                    cast(Glm5NextAttention, layer.self_attn)
                 )
 
             if isinstance(layer.mlp, Glm5NextMoE):
@@ -1100,12 +1100,11 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 self.all_to_sharded_linear_in_place(
                     layer.mlp.switch_mlp.up_proj
                 )
-                layer.mlp = ShardedMoE(layer.mlp)
-                layer.mlp.sharding_group = self.group
-            elif isinstance(layer.mlp, Glm5NextMLP):
-                self._shard_gate_up(layer.mlp)
+                sharded_mlp = ShardedMoE(layer.mlp)
+                sharded_mlp.sharding_group = self.group
+                dict.__setitem__(layer, "mlp", sharded_mlp)
             else:
-                raise TypeError(f"Unsupported GLM-5-Next MLP {type(layer.mlp)}")
+                self._shard_gate_up(cast(Glm5NextMLP, layer.mlp))
 
             mx.eval(layer)
             mx.clear_cache()
