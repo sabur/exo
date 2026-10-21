@@ -47,6 +47,7 @@ from exo.worker.engines.mlx.cache import (
     copy_snapshot_entry,
     encode_prompt,
     has_deepseek_v4_cache,
+    has_glm5_next_cache,
     has_non_kv_caches,
     is_non_trimmable_cache_entry,
     make_kv_cache,
@@ -381,37 +382,43 @@ def prefill(
     start_time = time.perf_counter()
     has_ssm = has_non_kv_caches(cache)
     has_v4 = has_deepseek_v4_cache(cache)
+    has_glm5 = has_glm5_next_cache(cache)
+    has_bounded_snapshots = has_v4 or has_glm5
     is_pipeline = _has_pipeline_communication_layer(model)
     use_pipeline_prefill = is_pipeline and num_tokens >= prefill_step_size
     pipeline_width = (
         group.size() if use_pipeline_prefill and group is not None else 1
     )
-    v4_snapshot_step = prefill_step_size // min(4, pipeline_width)
-    initial_v4_token_count = cache_length(cache) if has_v4 else 0
-    v4_snapshot_targets = _v4_snapshot_progress_targets(
-        initial_v4_token_count,
+    snapshot_step = prefill_step_size // min(4, pipeline_width)
+    initial_snapshot_token_count = (
+        cache_length(cache) if has_bounded_snapshots else 0
+    )
+    bounded_snapshot_targets = _v4_snapshot_progress_targets(
+        initial_snapshot_token_count,
         num_tokens,
-        v4_snapshot_step,
+        snapshot_step,
     )
     snapshots: list[CacheSnapshot] = []
-    v4_landmark_snapshots: list[CacheSnapshot] = []
-    v4_pre_gen_snapshot: CacheSnapshot | None = None
+    landmark_snapshots: list[CacheSnapshot] = []
+    bounded_pre_gen_snapshot: CacheSnapshot | None = None
     wsdpa_status_logged = False
-    if has_v4:
+    if has_bounded_snapshots:
         absolute_snapshot_targets = [
-            initial_v4_token_count + target for target in sorted(v4_snapshot_targets)
+            initial_snapshot_token_count + target
+            for target in sorted(bounded_snapshot_targets)
         ]
+        snapshot_label = "DeepSeek V4" if has_v4 else "GLM-5-Next"
         logger.info(
-            "[INSTRUMENT] DeepSeek V4 snapshot plan: "
-            f"start={initial_v4_token_count}, "
-            f"final={initial_v4_token_count + num_tokens - 1}, "
-            f"step={v4_snapshot_step}, "
+            f"[INSTRUMENT] {snapshot_label} snapshot plan: "
+            f"start={initial_snapshot_token_count}, "
+            f"final={initial_snapshot_token_count + num_tokens - 1}, "
+            f"step={snapshot_step}, "
             f"targets={absolute_snapshot_targets}"
         )
 
     # TODO(evan): kill the callbacks/runner refactor
     def progress_callback(processed: int, total: int) -> None:
-        nonlocal v4_pre_gen_snapshot, wsdpa_status_logged
+        nonlocal bounded_pre_gen_snapshot, wsdpa_status_logged
         elapsed = time.perf_counter() - start_time
         tok_per_sec = processed / elapsed if elapsed > 0 else 0
         logger.debug(
@@ -444,22 +451,24 @@ def prefill(
                         f"topk={wsdpa_prefill_route_active(topk=True)}"
                     )
                 wsdpa_status_logged = True
-        if has_v4:
-            if processed in v4_snapshot_targets and processed < total - 1:
+        if has_bounded_snapshots:
+            if processed in bounded_snapshot_targets and processed < total - 1:
                 candidate = snapshot_ssm_states(cache)
                 if candidate.token_count > 0:
-                    v4_landmark_snapshots.append(candidate)
+                    landmark_snapshots.append(candidate)
+                    snapshot_label = "DeepSeek V4" if has_v4 else "GLM-5-Next"
                     logger.info(
-                        "[INSTRUMENT] DeepSeek V4 landmark snapshot: "
+                        f"[INSTRUMENT] {snapshot_label} landmark snapshot: "
                         f"tokens={candidate.token_count}, "
                         f"memory={candidate.nbytes / (1 << 20):.1f}MiB"
                     )
-            if processed == total - 1 and v4_pre_gen_snapshot is None:
-                v4_pre_gen_snapshot = snapshot_ssm_states(cache)
+            if processed == total - 1 and bounded_pre_gen_snapshot is None:
+                bounded_pre_gen_snapshot = snapshot_ssm_states(cache)
+                snapshot_label = "DeepSeek V4" if has_v4 else "GLM-5-Next"
                 logger.info(
-                    "[INSTRUMENT] DeepSeek V4 pre-generation snapshot: "
-                    f"tokens={v4_pre_gen_snapshot.token_count}, "
-                    f"memory={v4_pre_gen_snapshot.nbytes / (1 << 20):.1f}MiB"
+                    f"[INSTRUMENT] {snapshot_label} pre-generation snapshot: "
+                    f"tokens={bounded_pre_gen_snapshot.token_count}, "
+                    f"memory={bounded_pre_gen_snapshot.nbytes / (1 << 20):.1f}MiB"
                 )
         elif has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
@@ -508,13 +517,14 @@ def prefill(
             ):
                 break  # Stop after first iteration - cache is now filled
     except PrefillCancelled:
-        if has_v4 and v4_landmark_snapshots:
+        if has_bounded_snapshots and landmark_snapshots:
             # Persistence remains atomic: incomplete prefill snapshots are local
             # until this function returns successfully.
+            snapshot_label = "DeepSeek V4" if has_v4 else "GLM-5-Next"
             logger.info(
-                "DeepSeek V4 prefill cancelled; discarding transient "
+                f"{snapshot_label} prefill cancelled; discarding transient "
                 "snapshots at tokens="
-                f"{[snapshot.token_count for snapshot in v4_landmark_snapshots]}"
+                f"{[snapshot.token_count for snapshot in landmark_snapshots]}"
             )
         raise
     finally:
@@ -523,12 +533,14 @@ def prefill(
 
     # stream_generate added 1 extra generated token to the cache, so we should trim it.
     # Because of needing to roll back arrays cache, we will generate on 2 tokens so trim 1 more.
-    if has_v4:
-        if v4_pre_gen_snapshot is None:
+    if has_bounded_snapshots:
+        if bounded_pre_gen_snapshot is None:
+            snapshot_label = "DeepSeek V4" if has_v4 else "GLM-5-Next"
             raise RuntimeError(
-                "DeepSeek V4 prefill did not capture the pre-generation cache state"
+                f"{snapshot_label} prefill did not capture the "
+                "pre-generation cache state"
             )
-        pre_gen = v4_pre_gen_snapshot
+        pre_gen = bounded_pre_gen_snapshot
     else:
         pre_gen = snapshots[-2] if has_ssm else None
     for i, c in enumerate(cache):
@@ -554,13 +566,13 @@ def prefill(
         f"cached={final_cached_mib - initial_cached_mib:+.1f}MiB"
     )
 
-    if has_v4:
+    if has_bounded_snapshots:
         return (
             tokens_per_sec,
             num_tokens,
             [
                 snapshot
-                for snapshot in (*v4_landmark_snapshots, v4_pre_gen_snapshot)
+                for snapshot in (*landmark_snapshots, bounded_pre_gen_snapshot)
                 if snapshot is not None
             ],
         )

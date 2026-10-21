@@ -60,9 +60,16 @@ from mlx_lm.models.qwen3_vl import Model as Qwen3VLModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
+from mlx_vlm.models.glm5_next.language import (
+    Glm5NextAttention,
+    Glm5NextLinearAttention,
+    Glm5NextMLP,
+    Glm5NextMoE,
+)
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.glm5_next import Glm5NextModel
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -92,7 +99,9 @@ class _LayerCallable(Protocol):
     protocol matches the vast majority of `mlx.nn.Module` subclasses.
     """
 
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
+    def __call__(
+        self, x: mx.array, *args: object, **kwargs: object
+    ) -> mx.array | tuple[mx.array, object]: ...
 
 
 class CustomMlxLayer(nn.Module):
@@ -129,7 +138,9 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.group = group
         self.is_prefill: bool = False
 
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+    def __call__(
+        self, x: mx.array, *args: object, **kwargs: object
+    ) -> mx.array | tuple[mx.array, object]:
         if self.r != 0:
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
@@ -155,12 +166,19 @@ class PipelineLastLayer(CustomMlxLayer):
         self.is_prefill: bool = False
         self.queue_sends: bool = False
 
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+    def __call__(
+        self, x: mx.array, *args: object, **kwargs: object
+    ) -> mx.array | tuple[mx.array, object]:
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        output: mx.array = self.original_layer(x, *args, **kwargs)
+        layer_output = self.original_layer(x, *args, **kwargs)
+        if isinstance(layer_output, tuple):
+            output, auxiliary = layer_output
+        else:
+            output = layer_output
+            auxiliary = None
 
         # Eval layer output to materialize it before send — this splits the graph
         # so the send is isolated and the receiving rank's recv can complete.
@@ -191,6 +209,8 @@ class PipelineLastLayer(CustomMlxLayer):
             ]
             mx.eval(output)
 
+        if isinstance(layer_output, tuple):
+            return output, auxiliary
         return output
 
 
@@ -515,6 +535,14 @@ def tensor_auto_parallel(
         )
     elif isinstance(model, DeepseekV4Model):
         tensor_parallel_sharding_strategy = DeepseekV4ShardingStrategy(
+            group,
+            all_to_sharded_linear,
+            sharded_to_all_linear,
+            all_to_sharded_linear_in_place,
+            sharded_to_all_linear_in_place,
+        )
+    elif isinstance(model, Glm5NextModel):
+        tensor_parallel_sharding_strategy = Glm5NextShardingStrategy(
             group,
             all_to_sharded_linear,
             sharded_to_all_linear,
@@ -931,6 +959,167 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
             wrapped = ShardedMoEV4(ffn)
             wrapped.sharding_group = self.group
             layer.ffn = wrapped  # type: ignore
+
+            mx.eval(layer)
+            mx.clear_cache()
+            yield ModelLoadingResponse(layers_loaded=i, total=total)
+
+        return model
+
+
+class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
+    def _shard_gate_up(self, module: Glm5NextMLP) -> None:
+        intermediate_size = module.down_proj.weight.shape[-1]
+        module.gate_up_proj = shard_linear(
+            module.gate_up_proj,
+            "all-to-sharded",
+            segments=[intermediate_size],
+            group=self.group,
+        )
+        module.down_proj = self.sharded_to_all_linear(module.down_proj)
+
+    def _shard_linear_attention(
+        self,
+        attention: Glm5NextLinearAttention,
+    ) -> None:
+        projection_dim = attention.projection_dim
+        attention.qkv_proj = shard_linear(
+            attention.qkv_proj,
+            "all-to-sharded",
+            segments=[projection_dim, 2 * projection_dim],
+            group=self.group,
+        )
+        attention.f_b_proj = self.all_to_sharded_linear(attention.f_b_proj)
+        attention.g_b_proj = self.all_to_sharded_linear(attention.g_b_proj)
+        attention.o_proj = self.sharded_to_all_linear(attention.o_proj)
+
+        rank = self.group.rank()
+        local_heads = attention.num_heads // self.N
+        head_start = rank * local_heads
+        head_end = head_start + local_heads
+        local_projection = local_heads * attention.head_dim
+
+        fbg = attention.fbg_a_proj
+        global_heads = attention.num_heads
+        indices = mx.concatenate(
+            [
+                mx.arange(attention.head_dim),
+                mx.arange(
+                    attention.head_dim + head_start,
+                    attention.head_dim + head_end,
+                ),
+                mx.arange(
+                    attention.head_dim + global_heads,
+                    2 * attention.head_dim + global_heads,
+                ),
+            ]
+        )
+        sharded_fbg = nn.Linear(
+            fbg.weight.shape[-1],
+            indices.shape[0],
+            bias="bias" in fbg,
+        )
+        sharded_fbg.weight = fbg.weight[indices]
+        if "bias" in fbg:
+            sharded_fbg.bias = fbg.bias[indices]
+        attention.fbg_a_proj = sharded_fbg
+
+        channel_indices = mx.concatenate(
+            [
+                mx.arange(head_start * attention.head_dim, head_end * attention.head_dim),
+                mx.arange(
+                    projection_dim + head_start * attention.head_dim,
+                    projection_dim + head_end * attention.head_dim,
+                ),
+                mx.arange(
+                    2 * projection_dim + head_start * attention.head_dim,
+                    2 * projection_dim + head_end * attention.head_dim,
+                ),
+            ]
+        )
+        attention.qkv_conv.conv.weight = attention.qkv_conv.conv.weight[
+            channel_indices
+        ]
+        attention.qkv_conv.conv.groups = 3 * local_projection
+        attention.A_log = attention.A_log[head_start:head_end]
+        attention.dt_bias = attention.dt_bias[
+            head_start * attention.head_dim : head_end * attention.head_dim
+        ]
+        attention.num_heads = local_heads
+        attention.projection_dim = local_projection
+
+    def _shard_sparse_attention(self, attention: Glm5NextAttention) -> None:
+        attention.q_b_proj = self.all_to_sharded_linear(attention.q_b_proj)
+        attention.o_proj = self.sharded_to_all_linear(attention.o_proj)
+
+        local_heads = attention.num_heads // self.N
+        head_start = self.group.rank() * local_heads
+        head_end = head_start + local_heads
+
+        def shard_heads(
+            weight: mx.array,
+            start: int = head_start,
+            end: int = head_end,
+        ) -> mx.array:
+            return weight[start:end]
+
+        attention.embed_q.apply(shard_heads)
+        attention.unembed_out.apply(shard_heads)
+        attention.num_heads = local_heads
+
+        if attention.indexer is not None:
+            indexer = attention.indexer
+            indexer.wq_b = self.all_to_sharded_linear(indexer.wq_b)
+            indexer.weights_proj = self.all_to_sharded_linear(
+                indexer.weights_proj
+            )
+            indexer.n_heads //= self.N
+
+    def shard_model(
+        self,
+        model: nn.Module,
+    ) -> Generator[ModelLoadingResponse, None, nn.Module]:
+        model = cast(Glm5NextModel, model)
+        total = len(model.layers)
+
+        if model.language_model.config.num_attention_heads % self.N:
+            raise ValueError(
+                "GLM-5-Next attention heads must be divisible by the world size"
+            )
+        if model.language_model.config.index_n_heads % self.N:
+            raise ValueError(
+                "GLM-5-Next index heads must be divisible by the world size"
+            )
+
+        for i, layer in enumerate(model.layers):
+            mx.eval(layer.parameters())
+
+            if isinstance(layer.self_attn, Glm5NextLinearAttention):
+                self._shard_linear_attention(layer.self_attn)
+            elif isinstance(layer.self_attn, Glm5NextAttention):
+                self._shard_sparse_attention(layer.self_attn)
+            else:
+                raise TypeError(
+                    f"Unsupported GLM-5-Next attention {type(layer.self_attn)}"
+                )
+
+            if isinstance(layer.mlp, Glm5NextMoE):
+                self._shard_gate_up(layer.mlp.shared_experts)
+                self.all_to_sharded_linear_in_place(
+                    layer.mlp.switch_mlp.gate_proj
+                )
+                self.sharded_to_all_linear_in_place(
+                    layer.mlp.switch_mlp.down_proj
+                )
+                self.all_to_sharded_linear_in_place(
+                    layer.mlp.switch_mlp.up_proj
+                )
+                layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
+                layer.mlp.sharding_group = self.group
+            elif isinstance(layer.mlp, Glm5NextMLP):
+                self._shard_gate_up(layer.mlp)
+            else:
+                raise TypeError(f"Unsupported GLM-5-Next MLP {type(layer.mlp)}")
 
             mx.eval(layer)
             mx.clear_cache()

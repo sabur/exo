@@ -8,6 +8,12 @@ import pytest
 from mlx_lm.models.cache import KVCache
 from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 from mlx_lm.sample_utils import make_sampler
+from mlx_vlm.models.cache import (
+    ArraysCache as VlmArraysCache,
+    CacheList as VlmCacheList,
+    KVCache as VlmKVCache,
+    PoolingCache as VlmPoolingCache,
+)
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
@@ -17,6 +23,7 @@ from exo.worker.engines.mlx.cache import (
     cache_length,
     encode_prompt,
     get_prefix_length,
+    has_glm5_next_cache,
     make_kv_cache,
     snapshot_ssm_states,
     trim_cache,
@@ -53,6 +60,34 @@ def _make_v4_cache(offset: int, pool_rows: int) -> DeepseekV4Cache:
         branch.pool = mx.full((1, pool_rows, 4), fill * offset)
         branch.pool_lengths = None
     return cache
+
+
+def _make_glm_cache(offset: int) -> list[VlmArraysCache | VlmCacheList]:
+    recurrent = VlmArraysCache(2)
+    recurrent.cache = [
+        mx.full((1, 3, 4), float(offset)),
+        mx.full((1, 4, 4), float(offset + 1)),
+    ]
+
+    latent = VlmKVCache()
+    projected = VlmKVCache()
+    index = VlmKVCache()
+    keys = mx.full((1, 1, offset, 4), float(offset))
+    empty_values = mx.zeros((1, 1, offset, 0))
+    latent.state = (keys, empty_values)
+    index.state = (keys, empty_values)
+    projected.state = (keys, keys + 0.5)
+
+    pool = VlmPoolingCache(4)
+    pool.buf_kv = mx.full((1, 4, 4), float(offset))
+    pool.buf_gate = mx.full((1, 4, 4), float(offset + 1))
+    pool.remainder = offset % 4
+    pool.pooled = mx.full((1, max(1, offset // 4), 4), float(offset))
+
+    return [
+        recurrent,
+        VlmCacheList(latent, index, pool, projected),
+    ]
 
 
 class _FailingGenerations(list[int]):
@@ -159,6 +194,33 @@ class TestKVPrefix:
         assert mx.array_equal(
             restored._branches["indexer"].pool,
             snapshot_cache._branches["indexer"].pool,
+        )
+
+    def test_trim_cache_restores_glm5_next_hybrid_snapshot(self):
+        snapshot_cache = _make_glm_cache(offset=12)
+        live_cache = _make_glm_cache(offset=100)
+        snapshot = snapshot_ssm_states(snapshot_cache)
+
+        assert has_glm5_next_cache(snapshot_cache)
+        assert snapshot.token_count == 12
+
+        trim_cache(live_cache, num_tokens=88, snapshot=snapshot)
+
+        restored_recurrent = cast(VlmArraysCache, live_cache[0])
+        restored_sparse = cast(VlmCacheList, live_cache[1])
+        snapshot_recurrent = cast(VlmArraysCache, snapshot_cache[0])
+        snapshot_sparse = cast(VlmCacheList, snapshot_cache[1])
+
+        assert restored_recurrent is not snapshot_recurrent
+        assert mx.array_equal(
+            restored_recurrent.cache[0],
+            snapshot_recurrent.cache[0],
+        )
+        assert restored_sparse[0].offset == 12
+        assert restored_sparse[2].remainder == snapshot_sparse[2].remainder
+        assert mx.array_equal(
+            restored_sparse[2].pooled,
+            snapshot_sparse[2].pooled,
         )
 
     def test_partial_v4_prefix_hit_restores_snapshot_before_suffix(self):

@@ -38,7 +38,7 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.utils import load_model
+from mlx_lm.utils import load_model as load_mlx_lm_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
@@ -64,8 +64,21 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.glm5_next import load_glm5_next_model
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
+
+
+def _load_text_model(model_path: Path, *, lazy: bool) -> nn.Module:
+    config_path = model_path / "config.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            config = json.load(f)
+        if config.get("model_type") == "glm5_next":
+            return load_glm5_next_model(model_path, lazy=lazy)
+
+    model, _ = load_mlx_lm_model(model_path, lazy=lazy, strict=False)
+    return model
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -191,7 +204,7 @@ def load_mlx_items(
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
 
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, lazy=True, strict=False)
+        model = _load_text_model(model_path, lazy=True)
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -254,7 +267,7 @@ def shard_and_load(
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    model = _load_text_model(model_path, lazy=True)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass

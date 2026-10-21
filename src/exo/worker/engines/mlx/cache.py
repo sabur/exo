@@ -22,6 +22,12 @@ from mlx_lm.models.deepseek_v4 import (
     _CompressorBranch as CompressorBranch,  # type: ignore
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
+from mlx_vlm.models.cache import (
+    ArraysCache as VlmArraysCache,
+    CacheList as VlmCacheList,
+    KVCache as VlmKVCache,
+    PoolingCache as VlmPoolingCache,
+)
 
 from exo.shared.types.memory import Memory
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
@@ -80,6 +86,9 @@ _MEDIA_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
 _V4_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
     "EXO_DEEPSEEK_V4_PREFIX_CACHE_MAX_ENTRIES", 3
 )
+_GLM5_PREFIX_CACHE_MAX_ENTRIES = _read_non_negative_int_env(
+    "EXO_GLM5_NEXT_PREFIX_CACHE_MAX_ENTRIES", 2
+)
 _PREFILL_MEMORY_RESERVE_BYTES = int(
     _read_non_negative_float_env(
         "EXO_PREFILL_MEMORY_RESERVE_GB",
@@ -103,7 +112,15 @@ class CacheSnapshot:
     def __init__(
         self,
         states: list[
-            RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+            RotatingKVCache
+            | ArraysCache
+            | CacheList
+            | DeepseekV4Cache
+            | VlmArraysCache
+            | VlmCacheList
+            | VlmKVCache
+            | VlmPoolingCache
+            | None
         ],
         token_count: int,
     ):
@@ -175,6 +192,11 @@ def _cache_state_nbytes(state: object | None) -> int:
             _cache_state_nbytes(entry)
             for entry in cast(list[object], cast(object, state))
         )
+    if isinstance(
+        state,
+        (VlmArraysCache, VlmCacheList, VlmKVCache, VlmPoolingCache),
+    ):
+        return int(state.nbytes)
     return int(getattr(state, "nbytes", 0))
 
 
@@ -246,6 +268,78 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
     return CacheList(*copied)
 
 
+def _detached_copy_tree(value: object) -> object:
+    if isinstance(value, mx.array):
+        copied = _detached_copy(value)
+        mx.eval(copied)
+        return copied
+    if isinstance(value, list):
+        return [_detached_copy_tree(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_detached_copy_tree(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _detached_copy_tree(item) for key, item in value.items()}
+    return deepcopy(value)
+
+
+def _copy_vlm_cache(
+    cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
+) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
+    if isinstance(cache, VlmCacheList):
+        return VlmCacheList(
+            *[
+                _copy_vlm_cache(inner)
+                for inner in cast(
+                    list[
+                        VlmArraysCache
+                        | VlmCacheList
+                        | VlmKVCache
+                        | VlmPoolingCache
+                    ],
+                    list(cache),
+                )
+            ]
+        )
+
+    snapshot = cast(
+        dict[str, object],
+        _detached_copy_tree(cache.prefix_cache_snapshot()),
+    )
+    if isinstance(cache, VlmArraysCache):
+        copied = VlmArraysCache(len(cache.cache))
+    elif isinstance(cache, VlmPoolingCache):
+        copied = VlmPoolingCache(cache.ratio)
+    else:
+        copied = VlmKVCache()
+    copied.prefix_cache_restore(snapshot)
+    return copied
+
+
+def _empty_vlm_cache(
+    cache: VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
+) -> VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache:
+    if isinstance(cache, VlmArraysCache):
+        return VlmArraysCache(len(cache.cache))
+    if isinstance(cache, VlmPoolingCache):
+        return VlmPoolingCache(cache.ratio)
+    if isinstance(cache, VlmCacheList):
+        return VlmCacheList(
+            *[
+                _empty_vlm_cache(inner)
+                for inner in cast(
+                    list[
+                        VlmArraysCache
+                        | VlmCacheList
+                        | VlmKVCache
+                        | VlmPoolingCache
+                    ],
+                    list(cache),
+                )
+            ]
+        )
+    return VlmKVCache()
+
+
 def _detached_copy_or_none(a: mx.array | None) -> mx.array | None:
     if a is None:
         return None
@@ -291,25 +385,53 @@ def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
 
 
 def copy_snapshot_entry(
-    entry: ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None,
-) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None:
-    match entry:
-        case None:
-            return None
-        case RotatingKVCache():
-            snap = copy_rotating_kv_cache(entry)
-            return snap if snap is not None else deepcopy(entry)
-        case ArraysCache():
-            return _copy_arrays_cache(entry)
-        case CacheList():
-            return _copy_cache_list(entry)
-        case DeepseekV4Cache():
-            return _copy_v4_cache(entry)
+    entry: (
+        ArraysCache
+        | RotatingKVCache
+        | CacheList
+        | DeepseekV4Cache
+        | VlmArraysCache
+        | VlmCacheList
+        | VlmKVCache
+        | VlmPoolingCache
+        | None
+    ),
+) -> (
+    ArraysCache
+    | RotatingKVCache
+    | CacheList
+    | DeepseekV4Cache
+    | VlmArraysCache
+    | VlmCacheList
+    | VlmKVCache
+    | VlmPoolingCache
+    | None
+):
+    if entry is None:
+        return None
+    if isinstance(entry, RotatingKVCache):
+        snap = copy_rotating_kv_cache(entry)
+        return snap if snap is not None else deepcopy(entry)
+    if isinstance(entry, ArraysCache):
+        return _copy_arrays_cache(entry)
+    if isinstance(entry, CacheList):
+        return _copy_cache_list(entry)
+    if isinstance(entry, DeepseekV4Cache):
+        return _copy_v4_cache(entry)
+    return _copy_vlm_cache(entry)
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[
-        RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+        RotatingKVCache
+        | ArraysCache
+        | CacheList
+        | DeepseekV4Cache
+        | VlmArraysCache
+        | VlmCacheList
+        | VlmKVCache
+        | VlmPoolingCache
+        | None
     ] = []
     for c in cache:
         if isinstance(c, ArraysCache):
@@ -320,6 +442,11 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
             states.append(_copy_cache_list(c))
         elif isinstance(c, DeepseekV4Cache):
             states.append(_copy_v4_cache(c))
+        elif isinstance(
+            c,
+            (VlmArraysCache, VlmCacheList, VlmKVCache, VlmPoolingCache),
+        ):
+            states.append(_copy_vlm_cache(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -343,9 +470,9 @@ def is_non_trimmable_cache_entry(c: object) -> bool:
     """A cache entry is non-trimmable if `trim(n)` can't roll back its full
     state — meaning the prefill +2 rollback must snapshot+restore it instead.
     """
-    if isinstance(c, (ArraysCache, RotatingKVCache)):
+    if isinstance(c, (ArraysCache, RotatingKVCache, VlmArraysCache)):
         return True
-    if isinstance(c, CacheList):
+    if isinstance(c, (CacheList, VlmCacheList)):
         return not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
     return isinstance(c, DeepseekV4Cache)
 
@@ -357,6 +484,21 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 def has_deepseek_v4_cache(cache: KVCacheType) -> bool:
     return any(isinstance(c, DeepseekV4Cache) for c in cache)
+
+
+def has_glm5_next_cache(cache: KVCacheType) -> bool:
+    return any(
+        isinstance(c, VlmCacheList)
+        and any(isinstance(inner, VlmPoolingCache) for inner in c.caches)
+        for c in cache
+    )
+
+
+def _copy_cache_sequence(cache: KVCacheType) -> list[object]:
+    return [
+        copied if (copied := copy_snapshot_entry(entry)) is not None else deepcopy(entry)
+        for entry in cache
+    ]
 
 
 def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
@@ -510,6 +652,7 @@ class KVPrefixCache:
     ):
         """Add a new cache entry. Evicts LRU entries if memory is high."""
         is_v4 = has_deepseek_v4_cache(cache)
+        is_glm5 = has_glm5_next_cache(cache)
         has_media = bool(media_regions)
         if _PREFIX_CACHE_MAX_ENTRIES == 0:
             logger.info("Prefix cache persistence is disabled")
@@ -520,15 +663,20 @@ class KVPrefixCache:
         if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
             logger.info("DeepSeek V4 prefix cache persistence is disabled")
             return
+        if is_glm5 and _GLM5_PREFIX_CACHE_MAX_ENTRIES == 0:
+            logger.info("GLM-5-Next prefix cache persistence is disabled")
+            return
 
         self._evict_for_prefill_headroom()
         self._evict_if_needed()
 
         store_start = time.perf_counter()
-        stored_cache = deepcopy(cache)
+        stored_cache = _copy_cache_sequence(cache)
         store_ms = (time.perf_counter() - store_start) * 1000
         stored_snapshots = (
-            _bounded_v4_snapshots(ssm_snapshots) if is_v4 else ssm_snapshots
+            _bounded_v4_snapshots(ssm_snapshots)
+            if is_v4 or is_glm5
+            else ssm_snapshots
         )
 
         access_counter = self._access_counter + 1
@@ -606,13 +754,19 @@ class KVPrefixCache:
 
         old_snapshots = self._snapshots[index]
         is_v4 = has_deepseek_v4_cache(cache)
+        is_glm5 = has_glm5_next_cache(cache)
         if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
             self._evict_entry(index, "DeepSeek V4 prefix persistence disabled")
             gc.collect()
             mx.clear_cache()
             return
+        if is_glm5 and _GLM5_PREFIX_CACHE_MAX_ENTRIES == 0:
+            self._evict_entry(index, "GLM-5-Next prefix persistence disabled")
+            gc.collect()
+            mx.clear_cache()
+            return
 
-        if is_v4:
+        if is_v4 or is_glm5:
             eligible = [
                 snapshot
                 for snapshot in old_snapshots or []
@@ -632,7 +786,7 @@ class KVPrefixCache:
             stored_snapshots = merged or None
 
         store_start = time.perf_counter()
-        stored_cache = deepcopy(cache)
+        stored_cache = _copy_cache_sequence(cache)
         store_ms = (time.perf_counter() - store_start) * 1000
         stored_media_regions = media_regions or []
         access_counter = self._access_counter + 1
@@ -816,13 +970,30 @@ class KVPrefixCache:
             _ordinal = -1
 
         materialize_start = time.perf_counter()
-        prompt_cache = deepcopy(self.caches[best_index])
+        prompt_cache = [
+            (
+                copied
+                if (copied := copy_snapshot_entry(entry)) is not None
+                else deepcopy(entry)
+            )
+            for entry in self.caches[best_index]
+        ]
         tokens_to_trim = best_cached_length - best_restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, best_restore_snap)
             # Reset cache offset to match trimmed length
             for c in prompt_cache:
-                if isinstance(c, (ArraysCache, RotatingKVCache)):
+                if isinstance(
+                    c,
+                    (
+                        ArraysCache,
+                        RotatingKVCache,
+                        VlmArraysCache,
+                        VlmCacheList,
+                        VlmKVCache,
+                        VlmPoolingCache,
+                    ),
+                ):
                     continue
                 if isinstance(c, DeepseekV4Cache):
                     continue
@@ -951,6 +1122,29 @@ class KVPrefixCache:
             self._evict_entry(
                 lru_index,
                 f"DeepSeek V4 entry cap {_V4_PREFIX_CACHE_MAX_ENTRIES}",
+            )
+            evicted_any = True
+
+        while (
+            sum(has_glm5_next_cache(cache) for cache in self.caches)
+            > _GLM5_PREFIX_CACHE_MAX_ENTRIES
+        ):
+            candidates = [
+                index
+                for index, cache in enumerate(self.caches)
+                if (
+                    has_glm5_next_cache(cache)
+                    and self._entry_generations[index] != protected_generation
+                )
+            ]
+            if not candidates:
+                break
+            lru_index = min(
+                candidates, key=lambda index: self._last_used[index]
+            )
+            self._evict_entry(
+                lru_index,
+                f"GLM-5-Next entry cap {_GLM5_PREFIX_CACHE_MAX_ENTRIES}",
             )
             evicted_any = True
 
@@ -1156,6 +1350,8 @@ def trim_cache(
                 if isinstance(c, RotatingKVCache):
                     c.offset = 0
                     c._idx = 0
+            elif isinstance(c, (VlmArraysCache, VlmCacheList)):
+                cache[i] = _empty_vlm_cache(c)  # type: ignore
             elif isinstance(c, DeepseekV4Cache):
                 cache[i] = DeepseekV4Cache(c.local.max_size)  # type: ignore
             else:
@@ -1188,7 +1384,11 @@ def _entry_length(
     | QuantizedKVCache
     | ArraysCache
     | CacheList
-    | DeepseekV4Cache,
+    | DeepseekV4Cache
+    | VlmArraysCache
+    | VlmCacheList
+    | VlmKVCache
+    | VlmPoolingCache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
     if hasattr(c, "offset"):
