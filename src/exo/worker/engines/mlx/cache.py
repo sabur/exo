@@ -2,7 +2,6 @@ import gc
 import os
 import time
 import uuid
-from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
@@ -61,6 +60,18 @@ class _VlmPoolingCacheView(_VlmPrefixCache, Protocol):
 
 class _VlmCacheListView(Protocol):
     caches: tuple[object, ...] | list[object]
+
+
+class _TrimmableCache(Protocol):
+    def trim(self, num_tokens: int) -> int: ...
+
+
+class _OffsetCache(Protocol):
+    offset: int
+
+
+class _SizedCache(Protocol):
+    def size(self) -> int: ...
 
 
 # Fraction of device memory above which LRU eviction kicks in.
@@ -1463,8 +1474,7 @@ def trim_cache(
 
 
 def trim_cache_entry(cache: object, num_tokens: int) -> int:
-    trim = cast(Callable[[int], int], getattr(cache, "trim"))
-    return trim(num_tokens)
+    return cast(_TrimmableCache, cache).trim(num_tokens)
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
@@ -1492,13 +1502,11 @@ def _entry_length(
     | VlmPoolingCache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
-    offset = cast(object, getattr(c, "offset", None))
-    if isinstance(offset, int):
-        return offset
+    if hasattr(c, "offset"):
+        return cast(_OffsetCache, c).offset
     # For CacheList
-    size = cast(object, getattr(c, "size", None))
-    if callable(size):
-        return cast(Callable[[], int], size)()
+    if hasattr(c, "size"):
+        return cast(_SizedCache, c).size()
     return 0
 
 

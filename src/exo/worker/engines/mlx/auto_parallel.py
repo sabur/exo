@@ -62,6 +62,8 @@ from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 from mlx_vlm.models.glm5_next.language import (
     DecoderLayer as Glm5NextDecoderLayer,
+)
+from mlx_vlm.models.glm5_next.language import (
     Glm5NextAttention,
     Glm5NextLinearAttention,
     Glm5NextMLP,
