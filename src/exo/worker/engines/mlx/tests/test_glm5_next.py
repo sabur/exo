@@ -181,7 +181,12 @@ def test_glm5_tensor_sharding_preserves_quantized_fbg_projection(
 ) -> None:
     config = _small_glm5_config()
     attention = Glm5NextLinearAttention(config, layer_idx=0)
-    nn.quantize(attention, group_size=32, bits=4)
+    nn.quantize(
+        attention,
+        group_size=32,
+        bits=4,
+        class_predicate=lambda path, _: path.endswith("fbg_a_proj"),
+    )
     original = attention.fbg_a_proj
     assert isinstance(original, nn.QuantizedLinear)
     original_weight = original.weight
