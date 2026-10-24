@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
 from mlx_vlm.models.glm5_next import LanguageModel, TextConfig
+from mlx_vlm.models.glm5_next.language import Glm5NextLinearAttention, Glm5NextMLP
 
-from exo.worker.engines.mlx import glm5_next
+from exo.worker.engines.mlx import auto_parallel, glm5_next
 from exo.worker.engines.mlx.cache import cache_length
 from exo.worker.engines.mlx.types import KVCacheType
 
@@ -44,6 +46,30 @@ class _FakeLanguageModel:
     ) -> _FakeOutput:
         del cache, inputs_embeds
         return _FakeOutput(logits=inputs.astype(mx.float32))
+
+
+class _FakeGroup:
+    def size(self) -> int:
+        return 2
+
+    def rank(self) -> int:
+        return 0
+
+
+def _glm_sharding_strategy() -> auto_parallel.Glm5NextShardingStrategy:
+    def identity(module: nn.Module) -> nn.Module:
+        return module
+
+    def no_op(_module: nn.Module) -> None:
+        return None
+
+    return auto_parallel.Glm5NextShardingStrategy(
+        cast(mx.distributed.Group, _FakeGroup()),
+        identity,  # type: ignore[arg-type]
+        identity,  # type: ignore[arg-type]
+        no_op,
+        no_op,
+    )
 
 
 def _small_glm5_config() -> TextConfig:
@@ -121,3 +147,80 @@ def test_reduced_glm5_next_runs_prompt_and_decode_with_hybrid_cache() -> None:
     assert decode_logits.shape == (1, 1, 128)
     assert cache_length(cache) == 7
     assert bool(mx.all(mx.isfinite(decode_logits)).item())
+
+
+def test_glm5_tensor_sharding_splits_quantized_gate_up_by_logical_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _small_glm5_config()
+    mlp = Glm5NextMLP(config)
+    nn.quantize(mlp, group_size=32, bits=4)
+    captured_segments: list[list[int]] = []
+
+    def capture_shard(
+        module: nn.Module,
+        _sharding: str,
+        *,
+        segments: list[int],
+        group: mx.distributed.Group,
+    ) -> nn.Module:
+        del group
+        captured_segments.append(segments)
+        return module
+
+    monkeypatch.setattr(auto_parallel, "shard_linear", capture_shard)
+
+    assert mlp.down_proj.weight.shape[-1] != config.intermediate_size
+    _glm_sharding_strategy()._shard_gate_up(mlp)
+
+    assert captured_segments == [[config.intermediate_size]]
+
+
+def test_glm5_tensor_sharding_preserves_quantized_fbg_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _small_glm5_config()
+    attention = Glm5NextLinearAttention(config, layer_idx=0)
+    nn.quantize(attention, group_size=32, bits=4)
+    original = attention.fbg_a_proj
+    assert isinstance(original, nn.QuantizedLinear)
+    original_weight = original.weight
+    original_scales = original.scales
+    original_biases = original.biases
+
+    def preserve_module(
+        module: nn.Module,
+        _sharding: str,
+        *,
+        segments: list[int],
+        group: mx.distributed.Group,
+    ) -> nn.Module:
+        del segments, group
+        return module
+
+    monkeypatch.setattr(auto_parallel, "shard_linear", preserve_module)
+    _glm_sharding_strategy()._shard_linear_attention(attention)
+
+    assert isinstance(attention.fbg_a_proj, nn.QuantizedLinear)
+    expected_indices = mx.concatenate(
+        [
+            mx.arange(config.linear_head_dim),
+            mx.arange(
+                config.linear_head_dim,
+                config.linear_head_dim + config.linear_num_heads // 2,
+            ),
+            mx.arange(
+                config.linear_head_dim + config.linear_num_heads,
+                2 * config.linear_head_dim + config.linear_num_heads,
+            ),
+        ]
+    )
+    assert mx.array_equal(
+        attention.fbg_a_proj.weight, original_weight[expected_indices]
+    ).item()
+    assert mx.array_equal(
+        attention.fbg_a_proj.scales, original_scales[expected_indices]
+    ).item()
+    assert mx.array_equal(
+        attention.fbg_a_proj.biases, original_biases[expected_indices]
+    ).item()

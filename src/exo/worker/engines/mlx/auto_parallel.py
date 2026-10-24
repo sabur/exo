@@ -968,7 +968,8 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
 
 class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
     def _shard_gate_up(self, module: Glm5NextMLP) -> None:
-        intermediate_size = module.down_proj.weight.shape[-1]
+        # Quantization packs the input axis, so split from the fused output rows.
+        intermediate_size = module.gate_up_proj.weight.shape[0] // 2
         module.gate_up_proj = shard_linear(
             module.gate_up_proj,
             "all-to-sharded",
@@ -1013,20 +1014,18 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 ),
             ]
         )
-        sharded_fbg = nn.Linear(
-            fbg.weight.shape[-1],
-            indices.shape[0],
-            bias="bias" in fbg,
-        )
-        sharded_fbg.weight = fbg.weight[indices]
-        if "bias" in fbg:
-            assert fbg.bias is not None
-            sharded_fbg.bias = fbg.bias[indices]
-        attention.fbg_a_proj = sharded_fbg
+
+        # Keep QuantizedLinear weights, scales, and biases in the same format.
+        def shard_fbg(value: mx.array) -> mx.array:
+            return value[indices]
+
+        fbg.apply(shard_fbg)
 
         channel_indices = mx.concatenate(
             [
-                mx.arange(head_start * attention.head_dim, head_end * attention.head_dim),
+                mx.arange(
+                    head_start * attention.head_dim, head_end * attention.head_dim
+                ),
                 mx.arange(
                     projection_dim + head_start * attention.head_dim,
                     projection_dim + head_end * attention.head_dim,
@@ -1037,9 +1036,7 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 ),
             ]
         )
-        attention.qkv_conv.conv.weight = attention.qkv_conv.conv.weight[
-            channel_indices
-        ]
+        attention.qkv_conv.conv.weight = attention.qkv_conv.conv.weight[channel_indices]
         attention.qkv_conv.conv.groups = 3 * local_projection
         attention.A_log = attention.A_log[head_start:head_end]
         attention.dt_bias = attention.dt_bias[
@@ -1089,15 +1086,9 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
 
             if isinstance(layer.mlp, Glm5NextMoE):
                 self._shard_gate_up(layer.mlp.shared_experts)
-                self.all_to_sharded_linear_in_place(
-                    layer.mlp.switch_mlp.gate_proj
-                )
-                self.sharded_to_all_linear_in_place(
-                    layer.mlp.switch_mlp.down_proj
-                )
-                self.all_to_sharded_linear_in_place(
-                    layer.mlp.switch_mlp.up_proj
-                )
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
+                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
                 sharded_mlp = ShardedMoE(layer.mlp)
                 sharded_mlp.sharding_group = self.group
                 layer_items = cast(dict[str, object], cast(object, layer))
