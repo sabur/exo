@@ -515,6 +515,38 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     return CacheSnapshot(states=states, token_count=token_count)
 
 
+def _adopt_non_trimmable_states(cache: KVCacheType) -> CacheSnapshot:
+    """Move an obsolete stored cache's rollback state into a snapshot."""
+    states: list[
+        RotatingKVCache
+        | ArraysCache
+        | CacheList
+        | DeepseekV4Cache
+        | VlmArraysCache
+        | VlmCacheList
+        | VlmKVCache
+        | VlmPoolingCache
+        | None
+    ] = []
+    for c in cache:
+        should_adopt = isinstance(
+            c,
+            (
+                ArraysCache,
+                RotatingKVCache,
+                DeepseekV4Cache,
+                VlmArraysCache,
+                VlmCacheList,
+                VlmKVCache,
+                VlmPoolingCache,
+            ),
+        )
+        if isinstance(c, CacheList):
+            should_adopt = not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
+        states.append(c if should_adopt else None)
+    return CacheSnapshot(states=states, token_count=cache_length(cache))
+
+
 def _find_nearest_snapshot(
     snapshots: list[CacheSnapshot],
     target_token_count: int,
@@ -890,6 +922,8 @@ class KVPrefixCache:
         index = self._entry_generations.index(entry_generation)
 
         old_snapshots = self._snapshots[index]
+        old_cache = self.caches[index]
+        old_frontier_token_count = cache_length(old_cache)
         is_v4 = has_deepseek_v4_cache(cache)
         is_glm5 = has_glm5_next_cache(cache)
         if is_v4 and _V4_PREFIX_CACHE_MAX_ENTRIES == 0:
@@ -909,9 +943,19 @@ class KVPrefixCache:
                 for snapshot in old_snapshots or []
                 if snapshot.token_count <= restore_pos
             ]
+            frontier_token_count = cache_length(cache)
+            if (
+                old_frontier_token_count > 0
+                and restore_pos == old_frontier_token_count
+                and old_frontier_token_count < frontier_token_count
+                and not any(
+                    snapshot.token_count == old_frontier_token_count
+                    for snapshot in eligible
+                )
+            ):
+                eligible.append(_adopt_non_trimmable_states(old_cache))
             eligible.extend(snapshots or [])
             pin = (restore_pos,) if restore_pos > 0 else ()
-            frontier_token_count = cache_length(cache)
             stored_snapshots = (
                 _bounded_v4_snapshots(
                     eligible,

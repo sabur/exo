@@ -939,6 +939,7 @@ class TestKVPrefix:
             [CacheSnapshot(states=updated_cache, token_count=80_999)],
             restore_pos=78_999,
         )
+        previous_stored_cache = prefix_cache.caches[0]
 
         newer_cache = [_make_v4_cache(offset=89_999, pool_rows=22)]
         prefix_cache.update_kv_cache(
@@ -961,6 +962,12 @@ class TestKVPrefix:
             85_000,
             88_000,
         ]
+        promoted = next(
+            snapshot
+            for snapshot in prefix_cache._snapshots[0]
+            if snapshot.token_count == 80_999
+        )
+        assert promoted.states[0] is previous_stored_cache[0]
 
     def test_v4_retains_sparse_cold_and_frontier_checkpoints(
         self,
