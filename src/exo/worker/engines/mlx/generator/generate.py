@@ -392,13 +392,9 @@ def prefill(
     has_bounded_snapshots = has_v4 or has_glm5
     is_pipeline = _has_pipeline_communication_layer(model)
     use_pipeline_prefill = is_pipeline
-    pipeline_width = (
-        group.size() if use_pipeline_prefill and group is not None else 1
-    )
+    pipeline_width = group.size() if use_pipeline_prefill and group is not None else 1
     snapshot_step = prefill_step_size // min(4, pipeline_width)
-    initial_snapshot_token_count = (
-        cache_length(cache) if has_bounded_snapshots else 0
-    )
+    initial_snapshot_token_count = cache_length(cache) if has_bounded_snapshots else 0
     bounded_snapshot_targets = (
         _v4_snapshot_progress_targets(
             initial_snapshot_token_count,

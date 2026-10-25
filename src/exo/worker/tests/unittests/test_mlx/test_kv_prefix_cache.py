@@ -631,13 +631,9 @@ class TestKVPrefix:
         second_cache = [_make_v4_cache(offset=20, pool_rows=5)]
         second_snapshot = CacheSnapshot(states=second_cache, token_count=20)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1):
             prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
-            prefix_cache.add_kv_cache(
-                second_prompt, second_cache, [second_snapshot]
-            )
+            prefix_cache.add_kv_cache(second_prompt, second_cache, [second_snapshot])
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
@@ -646,9 +642,7 @@ class TestKVPrefix:
     def test_generic_add_retains_eight_entries_and_evicts_the_lru(self):
         prefix_cache = KVPrefixCache(None)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8
-        ):
+        with patch("exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8):
             for token_count in range(1, 10):
                 prefix_cache.add_kv_cache(
                     mx.arange(token_count, dtype=mx.int32),
@@ -656,17 +650,13 @@ class TestKVPrefix:
                 )
 
         assert len(prefix_cache.prompts) == 8
-        assert [len(prompt) for prompt in prefix_cache.prompts] == list(
-            range(2, 10)
-        )
+        assert [len(prompt) for prompt in prefix_cache.prompts] == list(range(2, 10))
 
     def test_media_add_retains_four_entries_and_evicts_media_lru(self):
         prefix_cache = KVPrefixCache(None)
 
         with (
-            patch(
-                "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8
-            ),
+            patch("exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 8),
             patch(
                 "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES",
                 4,
@@ -701,9 +691,7 @@ class TestKVPrefix:
         )
 
         with (
-            patch(
-                "exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 1
-            ),
+            patch("exo.worker.engines.mlx.cache._PREFIX_CACHE_MAX_ENTRIES", 1),
             pytest.raises(RuntimeError, match="simulated generations append failure"),
         ):
             prefix_cache.add_kv_cache(
@@ -725,9 +713,7 @@ class TestKVPrefix:
         )
         prefix_cache.add_kv_cache(second_prompt, [KVCache()])
 
-        with patch(
-            "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 1
-        ):
+        with patch("exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 1):
             prefix_cache.update_kv_cache(
                 1,
                 second_prompt,
@@ -748,9 +734,7 @@ class TestKVPrefix:
             [KVCache()],
         )
 
-        with patch(
-            "exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 0
-        ):
+        with patch("exo.worker.engines.mlx.cache._MEDIA_PREFIX_CACHE_MAX_ENTRIES", 0):
             prefix_cache.update_kv_cache(
                 0,
                 mx.arange(8, dtype=mx.int32),
@@ -777,9 +761,7 @@ class TestKVPrefix:
             MagicMock(available=3),
         ]
         with (
-            patch(
-                "exo.worker.engines.mlx.cache._PREFILL_MEMORY_RESERVE_BYTES", 3
-            ),
+            patch("exo.worker.engines.mlx.cache._PREFILL_MEMORY_RESERVE_BYTES", 3),
             patch(
                 "exo.worker.engines.mlx.cache.psutil.virtual_memory",
                 side_effect=memory_samples,
@@ -802,22 +784,15 @@ class TestKVPrefix:
         prompt_cache = [MagicMock(state=())]
 
         with (
-            patch(
-                "exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"
-            ),
-            patch(
-                "exo.worker.engines.mlx.generator.generate.flush_prefill_sends"
-            ),
-            patch(
-                "exo.worker.engines.mlx.generator.generate.clear_prefill_sends"
-            ),
+            patch("exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"),
+            patch("exo.worker.engines.mlx.generator.generate.flush_prefill_sends"),
+            patch("exo.worker.engines.mlx.generator.generate.clear_prefill_sends"),
             patch("exo.worker.engines.mlx.generator.generate.mx.eval"),
             patch(
                 "exo.worker.engines.mlx.generator.generate.mx.clear_cache"
             ) as clear_cache,
             patch(
-                "exo.worker.engines.mlx.generator.generate."
-                "_CLEAR_CACHE_DURING_PREFILL",
+                "exo.worker.engines.mlx.generator.generate._CLEAR_CACHE_DURING_PREFILL",
                 True,
             ),
         ):
@@ -843,22 +818,15 @@ class TestKVPrefix:
         prompt_cache = [MagicMock(state=())]
 
         with (
-            patch(
-                "exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"
-            ),
-            patch(
-                "exo.worker.engines.mlx.generator.generate.flush_prefill_sends"
-            ),
-            patch(
-                "exo.worker.engines.mlx.generator.generate.clear_prefill_sends"
-            ),
+            patch("exo.worker.engines.mlx.generator.generate.maybe_quantize_kv_cache"),
+            patch("exo.worker.engines.mlx.generator.generate.flush_prefill_sends"),
+            patch("exo.worker.engines.mlx.generator.generate.clear_prefill_sends"),
             patch("exo.worker.engines.mlx.generator.generate.mx.eval"),
             patch(
                 "exo.worker.engines.mlx.generator.generate.mx.clear_cache"
             ) as clear_cache,
             patch(
-                "exo.worker.engines.mlx.generator.generate."
-                "_CLEAR_CACHE_DURING_PREFILL",
+                "exo.worker.engines.mlx.generator.generate._CLEAR_CACHE_DURING_PREFILL",
                 False,
             ),
         ):
@@ -880,9 +848,7 @@ class TestKVPrefix:
         """A cap of 3 retains three entries and evicts the LRU."""
         prefix_cache = KVPrefixCache(None)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
             for token_count in range(12, 60, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [
@@ -1010,9 +976,7 @@ class TestKVPrefix:
         cache = [_make_v4_cache(offset=12, pool_rows=3)]
         snapshot = CacheSnapshot(states=cache, token_count=12)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 0):
             prefix_cache.add_kv_cache(prompt, cache, [snapshot])
 
         assert prefix_cache.prompts == []
@@ -1022,10 +986,13 @@ class TestKVPrefix:
     def test_add_failure_keeps_parallel_collections_aligned(self):
         prefix_cache = KVPrefixCache(None)
 
-        with patch(
-            "exo.worker.engines.mlx.cache.deepcopy",
-            side_effect=RuntimeError("copy failed"),
-        ), pytest.raises(RuntimeError, match="copy failed"):
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache.deepcopy",
+                side_effect=RuntimeError("copy failed"),
+            ),
+            pytest.raises(RuntimeError, match="copy failed"),
+        ):
             prefix_cache.add_kv_cache(
                 mx.arange(4, dtype=mx.int32),
                 [KVCache()],
@@ -1049,10 +1016,13 @@ class TestKVPrefix:
         first_snapshot = CacheSnapshot(states=first_cache, token_count=12)
         prefix_cache.add_kv_cache(first_prompt, first_cache, [first_snapshot])
 
-        with patch(
-            "exo.worker.engines.mlx.cache.deepcopy",
-            side_effect=RuntimeError("copy failed"),
-        ), pytest.raises(RuntimeError, match="copy failed"):
+        with (
+            patch(
+                "exo.worker.engines.mlx.cache.deepcopy",
+                side_effect=RuntimeError("copy failed"),
+            ),
+            pytest.raises(RuntimeError, match="copy failed"),
+        ):
             prefix_cache.add_kv_cache(
                 mx.arange(20, dtype=mx.int32),
                 [_make_v4_cache(offset=20, pool_rows=5)],
@@ -1114,7 +1084,9 @@ class TestKVPrefix:
         model = MagicMock()
         model.layers = []
 
-        def fake_stream_generate(*, prompt, prompt_cache, prompt_progress_callback, **_):
+        def fake_stream_generate(
+            *, prompt, prompt_cache, prompt_progress_callback, **_
+        ):
             total = len(prompt)
             prompt_progress_callback(0, total)
             for processed in (
@@ -1190,9 +1162,7 @@ class TestKVPrefix:
         cache = [_make_v4_cache(offset=150_512, pool_rows=37)]
         prefix_cache.prompts = [mx.arange(141_313, dtype=mx.int32)]
         prefix_cache._entry_generations = [1]
-        prefix_cache.caches = [
-            [_make_v4_cache(offset=141_312, pool_rows=35)]
-        ]
+        prefix_cache.caches = [[_make_v4_cache(offset=141_312, pool_rows=35)]]
         prefix_cache._snapshots = [
             [
                 CacheSnapshot(states=[], token_count=18_432),
@@ -1246,10 +1216,12 @@ class TestKVPrefix:
             145_408,
         ]
 
-        query = mx.concatenate([
-            prompt[:146_420],
-            mx.array([999_999], dtype=mx.int32),
-        ])
+        query = mx.concatenate(
+            [
+                prompt[:146_420],
+                mx.array([999_999], dtype=mx.int32),
+            ]
+        )
         restored, _, matched_index, _ = prefix_cache.get_kv_cache(
             MagicMock(),
             query,
@@ -1426,7 +1398,9 @@ class TestKVPrefix:
         assert len(added) == 1
         assert "store_ms=" in added[0]
 
-        composite_before = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        composite_before = (
+            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        )
         telemetry_before = prefix_cache._entry_telemetry[0]
 
         # Update the entry
@@ -1445,7 +1419,9 @@ class TestKVPrefix:
         assert len(updated) == 1
         assert "store_ms=" in updated[0]
 
-        composite_after = f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        composite_after = (
+            f"{prefix_cache._instance_id}:{prefix_cache._entry_generations[0]}"
+        )
         assert composite_after == composite_before
         assert prefix_cache._entry_telemetry[0] is telemetry_before
         assert prefix_cache._entry_telemetry[0].update_count == 1
@@ -1498,9 +1474,7 @@ class TestKVPrefix:
         generation_before = prefix_cache._entry_generations[0]
 
         second_cache = [_make_v4_cache(offset=24, pool_rows=6)]
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 1):
             prefix_cache.add_kv_cache(
                 mx.arange(24, dtype=mx.int32),
                 second_cache,
@@ -1692,9 +1666,7 @@ class TestKVPrefix:
         """Generation IDs survive eviction-induced index shifts."""
         prefix_cache = KVPrefixCache(None)
 
-        with patch(
-            "exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3
-        ):
+        with patch("exo.worker.engines.mlx.cache._V4_PREFIX_CACHE_MAX_ENTRIES", 3):
             for token_count in range(12, 72, 12):
                 prompt = mx.arange(token_count, dtype=mx.int32)
                 cache = [_make_v4_cache(offset=token_count, pool_rows=token_count // 4)]
@@ -2222,10 +2194,12 @@ class TestV4CacheTelemetry:
         """
         # Prompt is 120 tokens; query is 97 tokens sharing only 95 prefix.
         prompt = mx.arange(120, dtype=mx.int32)
-        query = mx.concatenate([
-            prompt[:95],
-            mx.array([10_000, 10_001], dtype=mx.int32),
-        ])
+        query = mx.concatenate(
+            [
+                prompt[:95],
+                mx.array([10_000, 10_001], dtype=mx.int32),
+            ]
+        )
 
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [prompt]
@@ -2255,11 +2229,9 @@ class TestV4CacheTelemetry:
         prefix_cache._last_used = [10]
         prefix_cache.prefill_tps = [0.0]
 
-        with patch(
-            "exo.worker.engines.mlx.cache.logger.info"
-        ) as log_info:
-            restored, remaining, matched_index, is_exact = (
-                prefix_cache.get_kv_cache(MagicMock(), query)
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
+            restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+                MagicMock(), query
             )
 
         # Should have matched entry 0, non-exact, restored at 80 tokens
@@ -2269,7 +2241,8 @@ class TestV4CacheTelemetry:
 
         # Verify the log line contains the expected entry_id and ordinal
         selected = [
-            call.args[0] for call in log_info.call_args_list
+            call.args[0]
+            for call in log_info.call_args_list
             if call.args and call.args[0].startswith("KV cache selected:")
         ]
         assert len(selected) == 1
@@ -2297,17 +2270,16 @@ class TestV4CacheTelemetry:
         prefix_cache._last_used = [10]
         prefix_cache.prefill_tps = [0.0]
 
-        with patch(
-            "exo.worker.engines.mlx.cache.logger.info"
-        ) as log_info:
-            restored, remaining, matched_index, is_exact = (
-                prefix_cache.get_kv_cache(MagicMock(), query)
+        with patch("exo.worker.engines.mlx.cache.logger.info") as log_info:
+            restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+                MagicMock(), query
             )
 
         assert matched_index == 0
 
         selected = [
-            call.args[0] for call in log_info.call_args_list
+            call.args[0]
+            for call in log_info.call_args_list
             if call.args and call.args[0].startswith("KV cache selected:")
         ]
         assert len(selected) == 1
