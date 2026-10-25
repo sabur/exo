@@ -330,11 +330,11 @@ def pipeline_parallel_prefill(
         clear_prefill_sends()
 
     # Post-loop: process remaining 1 token + add +1 entry to match stream_generate.
-    for _ in range(2):
+    for postfill_index in range(2):
         with mx.stream(generation_stream):
             model(prompt[-1:][None], cache=_prompt_cache)
             quantize_cache_fn(_prompt_cache)
-        flush_prefill_sends()
+        flush_prefill_sends(wait=postfill_index == 1)
         if _CLEAR_CACHE_DURING_PREFILL:
             mx.clear_cache()
 

@@ -3,11 +3,13 @@ import multiprocessing as mp
 import os
 import tempfile
 from typing import Any
+from unittest.mock import MagicMock
 
 import mlx.core as mx
 import mlx.nn as mlx_nn
 import pytest
 
+import exo.worker.engines.mlx.auto_parallel as auto_parallel
 from exo.worker.engines.mlx.auto_parallel import (
     CustomMlxLayer,
     PipelineFirstLayer,
@@ -91,6 +93,28 @@ def test_missing_attribute_raises() -> None:
 
     with pytest.raises(AttributeError):
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]
+
+
+def test_flush_prefill_sends_can_wait_for_completion(monkeypatch) -> None:
+    output = mx.array([1.0])
+    sent = mx.array([2.0])
+    group = MagicMock()
+    send = MagicMock(return_value=sent)
+    eval_mock = MagicMock()
+    async_eval = MagicMock()
+
+    monkeypatch.setattr(auto_parallel.mx.distributed, "send", send)
+    monkeypatch.setattr(auto_parallel.mx, "eval", eval_mock)
+    monkeypatch.setattr(auto_parallel.mx, "async_eval", async_eval)
+    auto_parallel.clear_prefill_sends()
+    auto_parallel._pending_prefill_sends.append((output, 1, group))
+
+    auto_parallel.flush_prefill_sends(wait=True)
+
+    send.assert_called_once_with(output, 1, group=group)
+    eval_mock.assert_called_once_with(sent)
+    async_eval.assert_not_called()
+    assert auto_parallel._pending_prefill_sends == []
 
 
 def test_composed_call_works() -> None:
