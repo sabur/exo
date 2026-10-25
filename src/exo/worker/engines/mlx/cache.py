@@ -608,6 +608,7 @@ def _bounded_snapshots(
     snapshots: list[CacheSnapshot] | None,
     targets: tuple[int, ...],
     pinned_token_counts: tuple[int, ...] = (),
+    frontier_token_count: int | None = None,
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
@@ -615,9 +616,16 @@ def _bounded_snapshots(
         snapshot.token_count: snapshot for snapshot in snapshots
     }
     ordered = sorted(
-        snapshots_by_position.values(),
+        (
+            snapshot
+            for snapshot in snapshots_by_position.values()
+            if frontier_token_count is None
+            or snapshot.token_count < frontier_token_count
+        ),
         key=lambda snapshot: snapshot.token_count,
     )
+    if not ordered:
+        return None
     selected: dict[int, CacheSnapshot] = {}
     for target in (*targets, *pinned_token_counts):
         snapshot = _find_nearest_snapshot(ordered, target)
@@ -630,28 +638,40 @@ def _bounded_snapshots(
 def _bounded_v4_snapshots(
     snapshots: list[CacheSnapshot] | None,
     pinned_token_counts: tuple[int, ...] = (),
+    frontier_token_count: int | None = None,
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
-    final_token_count = max(snapshot.token_count for snapshot in snapshots)
+    final_token_count = (
+        frontier_token_count
+        if frontier_token_count is not None
+        else max(snapshot.token_count for snapshot in snapshots)
+    )
     return _bounded_snapshots(
         snapshots,
         v4_snapshot_landmark_targets(final_token_count),
         pinned_token_counts,
+        frontier_token_count,
     )
 
 
 def _bounded_glm5_snapshots(
     snapshots: list[CacheSnapshot] | None,
     pinned_token_counts: tuple[int, ...] = (),
+    frontier_token_count: int | None = None,
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
-    final_token_count = max(snapshot.token_count for snapshot in snapshots)
+    final_token_count = (
+        frontier_token_count
+        if frontier_token_count is not None
+        else max(snapshot.token_count for snapshot in snapshots)
+    )
     return _bounded_snapshots(
         snapshots,
         glm5_snapshot_landmark_targets(final_token_count),
         pinned_token_counts,
+        frontier_token_count,
     )
 
 
@@ -782,10 +802,17 @@ class KVPrefixCache:
         store_start = time.perf_counter()
         stored_cache = _copy_cache_sequence(cache)
         store_ms = (time.perf_counter() - store_start) * 1000
+        frontier_token_count = cache_length(stored_cache)
         if is_v4:
-            stored_snapshots = _bounded_v4_snapshots(ssm_snapshots)
+            stored_snapshots = _bounded_v4_snapshots(
+                ssm_snapshots,
+                frontier_token_count=frontier_token_count,
+            )
         elif is_glm5:
-            stored_snapshots = _bounded_glm5_snapshots(ssm_snapshots)
+            stored_snapshots = _bounded_glm5_snapshots(
+                ssm_snapshots,
+                frontier_token_count=frontier_token_count,
+            )
         else:
             stored_snapshots = ssm_snapshots
 
@@ -884,10 +911,19 @@ class KVPrefixCache:
             ]
             eligible.extend(snapshots or [])
             pin = (restore_pos,) if restore_pos > 0 else ()
+            frontier_token_count = cache_length(cache)
             stored_snapshots = (
-                _bounded_v4_snapshots(eligible, pinned_token_counts=pin)
+                _bounded_v4_snapshots(
+                    eligible,
+                    pinned_token_counts=pin,
+                    frontier_token_count=frontier_token_count,
+                )
                 if is_v4
-                else _bounded_glm5_snapshots(eligible, pinned_token_counts=pin)
+                else _bounded_glm5_snapshots(
+                    eligible,
+                    pinned_token_counts=pin,
+                    frontier_token_count=frontier_token_count,
+                )
             )
         else:
             merged: list[CacheSnapshot] = []
@@ -928,8 +964,14 @@ class KVPrefixCache:
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
     ) -> tuple[int, CacheSnapshot | None]:
+        cached_length = cache_length(self.caches[entry_index])
         if not has_non_kv_caches(self.caches[entry_index]):
             return target_token_count, None
+
+        # The detached stored cache is already an exact restorable frontier.
+        # Earlier snapshots are only needed when the match ends before it.
+        if target_token_count >= cached_length:
+            return cached_length, None
 
         snapshots = self._snapshots[entry_index]
         if not snapshots:
@@ -1020,7 +1062,18 @@ class KVPrefixCache:
             stored_cache_mib = sum(
                 _cache_state_nbytes(state) for state in candidate_cache
             ) / (1 << 20)
-            usable = restore_snap is not None or not candidate_has_ssm
+            uses_stored_frontier = (
+                candidate_has_ssm
+                and candidate_cached_length > 0
+                and restore_snap is None
+                and restore_pos == candidate_cached_length
+                and target >= candidate_cached_length
+            )
+            usable = (
+                restore_snap is not None
+                or not candidate_has_ssm
+                or uses_stored_frontier
+            )
             candidate_details.append(
                 f"{i}:tokens={len(cached_prompt)},raw={raw_length},"
                 f"validated={validated_length},restore={restore_pos},"

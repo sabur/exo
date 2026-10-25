@@ -263,20 +263,75 @@ class TestKVPrefix:
         restored_v4 = cast(DeepseekV4Cache, restored[0])
         assert restored_v4._branches["compressor"].pool.shape[1] == 3
 
-    def test_final_v4_snapshot_supports_append_only_hit(self):
+    def test_stored_v4_cache_supports_append_only_hit_without_snapshot(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate([cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)])
+        prefix_cache = KVPrefixCache(None)
+        cache = [_make_v4_cache(offset=98, pool_rows=24)]
+        prefix_cache.add_kv_cache(
+            cached_prompt,
+            cache,
+            [CacheSnapshot(states=cache, token_count=98)],
+        )
+
+        assert prefix_cache._snapshots[0] is None
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 98
+        assert mx.array_equal(remaining, query[98:])
+
+    def test_stored_glm5_cache_supports_append_only_hit_without_snapshot(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate([cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)])
+        prefix_cache = KVPrefixCache(None)
+        cache = _make_glm_cache(offset=98)
+        prefix_cache.add_kv_cache(
+            cached_prompt,
+            cache,
+            [snapshot_ssm_states(cache)],
+        )
+
+        assert prefix_cache._snapshots[0] is None
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 98
+        assert mx.array_equal(remaining, query[98:])
+
+    def test_stored_glm5_cache_supports_exact_hit_without_snapshot(self):
+        query = mx.arange(100, dtype=mx.int32)
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.add_kv_cache(query, _make_glm_cache(offset=99))
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            MagicMock(), query
+        )
+
+        assert matched_index == 0
+        assert is_exact
+        assert cache_length(restored) == 99
+        assert mx.array_equal(remaining, query[99:])
+
+    def test_partial_glm5_hit_uses_earlier_snapshot(self):
         cached_prompt = mx.arange(100, dtype=mx.int32)
         query = mx.concatenate(
-            [cached_prompt, mx.arange(1000, 1010, dtype=mx.int32)]
+            [cached_prompt[:50], mx.arange(1000, 1010, dtype=mx.int32)]
         )
-        snapshot = CacheSnapshot(
-            states=[_make_v4_cache(offset=98, pool_rows=24)],
-            token_count=98,
-        )
+        snapshot_cache = _make_glm_cache(offset=40)
         prefix_cache = KVPrefixCache(None)
         prefix_cache.prompts = [cached_prompt]
         prefix_cache._entry_generations = [1]
-        prefix_cache.caches = [[_make_v4_cache(offset=98, pool_rows=24)]]
-        prefix_cache._snapshots = [[snapshot]]
+        prefix_cache.caches = [_make_glm_cache(offset=98)]
+        prefix_cache._snapshots = [[snapshot_ssm_states(snapshot_cache)]]
         prefix_cache._media_regions = [[]]
         prefix_cache._last_used = [0]
         prefix_cache.prefill_tps = [0.0]
@@ -287,8 +342,33 @@ class TestKVPrefix:
 
         assert matched_index == 0
         assert not is_exact
-        assert cache_length(restored) == 98
-        assert mx.array_equal(remaining, query[98:])
+        assert cache_length(restored) == 40
+        assert mx.array_equal(remaining, query[40:])
+
+    def test_partial_glm5_hit_without_snapshot_falls_back_to_prefill(self):
+        cached_prompt = mx.arange(100, dtype=mx.int32)
+        query = mx.concatenate(
+            [cached_prompt[:50], mx.arange(1000, 1010, dtype=mx.int32)]
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.prompts = [cached_prompt]
+        prefix_cache._entry_generations = [1]
+        prefix_cache.caches = [_make_glm_cache(offset=98)]
+        prefix_cache._snapshots = [None]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [0]
+        prefix_cache.prefill_tps = [0.0]
+        model = MagicMock(spec=[])
+        model.layers = []
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            model, query
+        )
+
+        assert restored == []
+        assert mx.array_equal(remaining, query)
+        assert matched_index is None
+        assert not is_exact
 
     def test_v4_uses_earlier_snapshot_when_final_is_past_match(self):
         cached_prompt = mx.arange(100, dtype=mx.int32)
@@ -330,8 +410,8 @@ class TestKVPrefix:
         prefix_cache.prompts = [query, query]
         prefix_cache._entry_generations = [1, 2]
         prefix_cache.caches = [
-            [_make_v4_cache(offset=99, pool_rows=25)],
-            [_make_v4_cache(offset=99, pool_rows=25)],
+            [_make_v4_cache(offset=119, pool_rows=30)],
+            [_make_v4_cache(offset=119, pool_rows=30)],
         ]
         prefix_cache._snapshots = [
             [
@@ -561,8 +641,7 @@ class TestKVPrefix:
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], second_prompt)
-        assert prefix_cache._snapshots[0] is not None
-        assert [s.token_count for s in prefix_cache._snapshots[0]] == [20]
+        assert prefix_cache._snapshots[0] is None
 
     def test_generic_add_retains_eight_entries_and_evicts_the_lru(self):
         prefix_cache = KVPrefixCache(None)
@@ -831,12 +910,7 @@ class TestKVPrefix:
             48,
             60,
         ]
-        assert all(snapshots is not None for snapshots in prefix_cache._snapshots)
-        assert [
-            snapshots[0].token_count
-            for snapshots in prefix_cache._snapshots
-            if snapshots is not None
-        ] == [36, 48, 60]
+        assert prefix_cache._snapshots == [None, None, None]
 
     def test_v4_update_preserves_restore_boundary_and_frontier_landmarks(self):
         prefix_cache = KVPrefixCache(None)
@@ -885,7 +959,6 @@ class TestKVPrefix:
             38_912,
             80_999,
             85_000,
-            89_999,
         ]
 
     def test_v4_retains_sparse_cold_and_frontier_checkpoints(
@@ -920,7 +993,6 @@ class TestKVPrefix:
             159_744,
             212_992,
             217_088,
-            221_542,
         ]
 
     def test_v4_persistence_can_be_disabled(self):
@@ -985,8 +1057,7 @@ class TestKVPrefix:
 
         assert len(prefix_cache.prompts) == 1
         assert mx.array_equal(prefix_cache.prompts[0], first_prompt)
-        assert prefix_cache._snapshots[0] is not None
-        assert [s.token_count for s in prefix_cache._snapshots[0]] == [12]
+        assert prefix_cache._snapshots[0] is None
 
     def test_v4_snapshot_landmarks_bias_toward_frontier(self):
         assert v4_snapshot_landmark_targets(150_000) == (
@@ -1076,6 +1147,9 @@ class TestKVPrefix:
                 "exo.worker.engines.mlx.generator.generate.snapshot_ssm_states",
                 wraps=snapshot_ssm_states,
             ) as snapshot_mock,
+            patch(
+                "exo.worker.engines.mlx.generator.generate.copy_snapshot_entry",
+            ) as copy_snapshot_mock,
         ):
             _, _, snapshots = prefill(
                 model,
@@ -1089,6 +1163,7 @@ class TestKVPrefix:
             )
 
         assert snapshot_mock.call_count == 8
+        copy_snapshot_mock.assert_not_called()
         assert [snapshot.token_count for snapshot in snapshots] == [
             16384,
             49152,
@@ -1097,7 +1172,6 @@ class TestKVPrefix:
             102400,
             110592,
             114688,
-            len(prompt_tokens) - 1,
         ]
         assert cache_length(cache) == len(prompt_tokens) - 1
 
@@ -1161,7 +1235,6 @@ class TestKVPrefix:
             133_120,
             141_312,
             145_408,
-            150_512,
         ]
 
         query = mx.concatenate([

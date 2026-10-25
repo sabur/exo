@@ -561,7 +561,11 @@ def prefill(
         non_trimmable = is_non_trimmable_cache_entry(c)
         if has_ssm and non_trimmable:
             assert pre_gen is not None
-            restored = copy_snapshot_entry(pre_gen.states[i])
+            if has_bounded_snapshots:
+                restored = pre_gen.states[i]
+                pre_gen.states[i] = None
+            else:
+                restored = copy_snapshot_entry(pre_gen.states[i])
             if restored is not None:
                 cache[i] = restored  # type: ignore
         else:
@@ -581,14 +585,13 @@ def prefill(
     )
 
     if has_bounded_snapshots:
+        # The pre-generation snapshot is transient rollback state. The stored
+        # full cache is the persistent frontier, so only earlier landmarks
+        # need to leave this function.
         return (
             tokens_per_sec,
             num_tokens,
-            [
-                snapshot
-                for snapshot in (*landmark_snapshots, bounded_pre_gen_snapshot)
-                if snapshot is not None
-            ],
+            landmark_snapshots,
         )
 
     # Exclude the last snapshot
