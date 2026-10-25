@@ -82,13 +82,10 @@ if TYPE_CHECKING:
 _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
 
 
-def flush_prefill_sends(*, wait: bool = False) -> None:
+def flush_prefill_sends() -> None:
     for output, dst, group in _pending_prefill_sends:
         sent = mx.distributed.send(output, dst, group=group)
-        if wait:
-            mx.eval(sent)
-        else:
-            mx.async_eval(sent)
+        mx.async_eval(sent)
     _pending_prefill_sends.clear()
 
 
