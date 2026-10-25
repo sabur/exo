@@ -967,16 +967,28 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
 
 
 class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
-    def _shard_gate_up(self, module: Glm5NextMLP) -> None:
+    @staticmethod
+    def _gate_up_intermediate_size(module: Glm5NextMLP) -> int:
         # Quantization packs the input axis, so split from the fused output rows.
-        intermediate_size = module.gate_up_proj.weight.shape[0] // 2
+        return module.gate_up_proj.weight.shape[0] // 2
+
+    def _shard_gate_up(self, module: Glm5NextMLP) -> None:
         module.gate_up_proj = shard_linear(
             module.gate_up_proj,
             "all-to-sharded",
-            segments=[intermediate_size],
+            segments=[self._gate_up_intermediate_size(module)],
             group=self.group,
         )
         module.down_proj = self.sharded_to_all_linear(module.down_proj)
+
+    def _shard_gate_up_in_place(self, module: Glm5NextMLP) -> None:
+        shard_inplace(
+            module.gate_up_proj,
+            "all-to-sharded",
+            segments=[self._gate_up_intermediate_size(module)],
+            group=self.group,
+        )
+        self.sharded_to_all_linear_in_place(module.down_proj)
 
     def _shard_linear_attention(
         self,
@@ -1085,7 +1097,9 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
                 self._shard_sparse_attention(layer.self_attn)
 
             if isinstance(layer.mlp, Glm5NextMoE):
-                self._shard_gate_up(layer.mlp.shared_experts)
+                # The outer ShardedMoE performs the single reduction after
+                # routed and shared partials are combined.
+                self._shard_gate_up_in_place(layer.mlp.shared_experts)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
                 self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
                 self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)

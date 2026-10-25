@@ -1,12 +1,17 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock
 
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
 from mlx_vlm.models.glm5_next import LanguageModel, TextConfig
-from mlx_vlm.models.glm5_next.language import Glm5NextLinearAttention, Glm5NextMLP
+from mlx_vlm.models.glm5_next.language import (
+    Glm5NextLinearAttention,
+    Glm5NextMLP,
+    Glm5NextMoE,
+)
 
 from exo.worker.engines.mlx import auto_parallel, glm5_next
 from exo.worker.engines.mlx.cache import cache_length
@@ -174,6 +179,72 @@ def test_glm5_tensor_sharding_splits_quantized_gate_up_by_logical_width(
     _glm_sharding_strategy()._shard_gate_up(mlp)
 
     assert captured_segments == [[config.intermediate_size]]
+
+
+def test_glm5_tensor_sharding_shared_expert_defers_reduction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _small_glm5_config()
+    shared_expert = Glm5NextMLP(config)
+    nn.quantize(shared_expert, group_size=32, bits=4)
+    shard_calls: list[tuple[nn.Module, str, list[int], mx.distributed.Group]] = []
+    down_calls: list[nn.Module] = []
+    group = cast(mx.distributed.Group, _FakeGroup())
+
+    def capture_shard_inplace(
+        module: nn.Module,
+        sharding: str,
+        *,
+        segments: list[int],
+        group: mx.distributed.Group,
+    ) -> None:
+        shard_calls.append((module, sharding, segments, group))
+
+    def capture_down(module: nn.Module) -> None:
+        down_calls.append(module)
+
+    monkeypatch.setattr(auto_parallel, "shard_inplace", capture_shard_inplace)
+    strategy = auto_parallel.Glm5NextShardingStrategy(
+        group,
+        lambda module: module,  # type: ignore[arg-type,return-value]
+        lambda module: module,  # type: ignore[arg-type,return-value]
+        lambda _module: None,
+        capture_down,
+    )
+
+    strategy._shard_gate_up_in_place(shared_expert)
+
+    assert shard_calls == [
+        (
+            shared_expert.gate_up_proj,
+            "all-to-sharded",
+            [config.intermediate_size],
+            group,
+        )
+    ]
+    assert down_calls == [shared_expert.down_proj]
+
+
+def test_glm5_tensor_sharding_uses_outer_reduction_for_moe_shared_expert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = glm5_next.Glm5NextModel(LanguageModel(_small_glm5_config()))
+    strategy = _glm_sharding_strategy()
+    dense_shard = MagicMock()
+    shared_shard = MagicMock()
+    monkeypatch.setattr(strategy, "_shard_gate_up", dense_shard)
+    monkeypatch.setattr(strategy, "_shard_gate_up_in_place", shared_shard)
+    monkeypatch.setattr(strategy, "_shard_linear_attention", MagicMock())
+    monkeypatch.setattr(strategy, "_shard_sparse_attention", MagicMock())
+    moe = model.layers[3].mlp
+    assert isinstance(moe, Glm5NextMoE)
+    shared_expert = moe.shared_experts
+
+    list(strategy.shard_model(model))
+
+    assert dense_shard.call_count == 3
+    shared_shard.assert_called_once_with(shared_expert)
+    assert isinstance(model.layers[3].mlp, auto_parallel.ShardedMoE)
 
 
 def test_glm5_tensor_sharding_preserves_quantized_fbg_projection(
