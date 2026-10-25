@@ -204,9 +204,10 @@ class PipelineLastLayer(CustomMlxLayer):
                     (output, (self.r + 1) % self.s, self.group)
                 )
             else:
-                output = mx.distributed.send(
+                sent = mx.distributed.send(
                     output, (self.r + 1) % self.s, group=self.group
                 )
+                mx.async_eval(sent)
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.

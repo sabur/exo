@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import tempfile
 from typing import Any
+from unittest.mock import MagicMock
 
 import mlx.core as mx
 import mlx.nn as mlx_nn
@@ -91,6 +92,31 @@ def test_missing_attribute_raises() -> None:
 
     with pytest.raises(AttributeError):
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]
+
+
+def test_pipeline_decode_schedules_send_and_gathers_hidden_state(monkeypatch) -> None:
+    group = MagicMock()
+    sent = mx.array([9.0])
+    send = MagicMock(return_value=sent)
+    async_eval = MagicMock()
+    eval_mock = MagicMock()
+    all_gather = MagicMock(side_effect=lambda value, group: value)
+
+    monkeypatch.setattr(mx.distributed, "send", send)
+    monkeypatch.setattr(mx.distributed, "all_gather", all_gather)
+    monkeypatch.setattr(mx, "async_eval", async_eval)
+    monkeypatch.setattr(mx, "eval", eval_mock)
+
+    layer = PipelineLastLayer(MockLayer(), r=0, s=2, group=group)
+    inputs = mx.ones((1, 4))
+    output = layer(inputs)
+
+    sent_hidden = send.call_args.args[0]
+    gathered_hidden = all_gather.call_args.args[0]
+    assert gathered_hidden is sent_hidden
+    assert mx.array_equal(output, inputs * 2)
+    async_eval.assert_called_once_with(sent)
+    assert all(call.args[0] is not sent for call in eval_mock.call_args_list)
 
 
 def test_composed_call_works() -> None:
