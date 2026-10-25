@@ -183,6 +183,16 @@ def _has_pipeline_communication_layer(model: Model):
     return False
 
 
+def _synchronize_before_decode(
+    model: Model,
+    group: mx.distributed.Group | None,
+) -> None:
+    if _has_pipeline_communication_layer(model):
+        logger.info("Pipeline decode uses stage send/receive synchronization")
+        return
+    mx_barrier(group)
+
+
 def _v4_snapshot_progress_targets(
     initial_token_count: int,
     num_tokens: int,
@@ -915,7 +925,7 @@ def mlx_generate(
     generation_start_time = time.perf_counter()
     usage: Usage | None = None
     logger.info("Starting decode")
-    mx_barrier(group)
+    _synchronize_before_decode(model, group)
 
     for completion_tokens, out in enumerate(
         stream_generate(

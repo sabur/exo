@@ -38,6 +38,7 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.generator.generate import (
     _glm5_snapshot_progress_targets,
+    _synchronize_before_decode,
     _v4_snapshot_progress_targets,
     mlx_generate,
     pipeline_parallel_prefill,
@@ -153,6 +154,38 @@ class TestGetPrefixLength:
 
 
 class TestKVPrefix:
+    def test_pipeline_decode_skips_collective_barrier(self):
+        model = MagicMock()
+        group = MagicMock()
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate."
+                "_has_pipeline_communication_layer",
+                return_value=True,
+            ),
+            patch("exo.worker.engines.mlx.generator.generate.mx_barrier") as barrier,
+        ):
+            _synchronize_before_decode(model, group)
+
+        barrier.assert_not_called()
+
+    def test_non_pipeline_decode_keeps_collective_barrier(self):
+        model = MagicMock()
+        group = MagicMock()
+
+        with (
+            patch(
+                "exo.worker.engines.mlx.generator.generate."
+                "_has_pipeline_communication_layer",
+                return_value=False,
+            ),
+            patch("exo.worker.engines.mlx.generator.generate.mx_barrier") as barrier,
+        ):
+            _synchronize_before_decode(model, group)
+
+        barrier.assert_called_once_with(group)
+
     @pytest.fixture
     def mock_tokenizer(self):
         """Create a minimal mock tokenizer for tests that don't need real tokenization."""
