@@ -138,14 +138,21 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
         self.is_prefill: bool = False
+        self.logged_decode_receive: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
+            log_decode = not self.is_prefill and not self.logged_decode_receive
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode waiting for stage input")
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
             mx.eval(x)
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             mx.eval(x)
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode received stage input")
+                self.logged_decode_receive = True
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -164,13 +171,19 @@ class PipelineLastLayer(CustomMlxLayer):
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
         self.queue_sends: bool = False
+        self.logged_decode_boundary: bool = False
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+        log_decode = not self.is_prefill and not self.logged_decode_boundary
+        if log_decode:
+            logger.info(f"[R{self.r}] Pipeline decode entering final local layer")
         cache = self.original_layer_signature.bind_partial(
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
         layer_output = cast(object, self.original_layer(x, *args, **kwargs))
+        if log_decode:
+            logger.info(f"[R{self.r}] Pipeline decode completed final local layer")
         if isinstance(layer_output, tuple):
             pair = cast(tuple[object, object], layer_output)
             output = cast(mx.array, pair[0])
@@ -184,6 +197,8 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode sending stage output")
             if self.queue_sends:
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
@@ -201,12 +216,19 @@ class PipelineLastLayer(CustomMlxLayer):
             mx.eval(output)
             if cache is not None and hasattr(_cache, "keys"):  # type: ignore
                 mx.eval(_cache.keys)  # type: ignore
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode sent stage output")
 
         if not self.is_prefill:
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode entering all-gather")
             output = mx.distributed.all_gather(output, group=self.group)[
                 -output.shape[0] :
             ]
             mx.eval(output)
+            if log_decode:
+                logger.info(f"[R{self.r}] Pipeline decode completed all-gather")
+                self.logged_decode_boundary = True
 
         if isinstance(layer_output, tuple):
             return cast(mx.array, cast(object, (output, auxiliary)))
