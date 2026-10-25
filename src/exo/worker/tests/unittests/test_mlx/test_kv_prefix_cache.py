@@ -959,6 +959,7 @@ class TestKVPrefix:
             38_912,
             80_999,
             85_000,
+            88_000,
         ]
 
     def test_v4_retains_sparse_cold_and_frontier_checkpoints(
@@ -993,6 +994,7 @@ class TestKVPrefix:
             159_744,
             212_992,
             217_088,
+            221_184,
         ]
 
     def test_v4_persistence_can_be_disabled(self):
