@@ -1258,7 +1258,7 @@ class TestKVPrefix:
         assert matched_index == 0
         assert cache_length(restored) == 145_408
 
-    def test_prefill_resets_pipeline_flags_after_pipeline_error(self):
+    def test_short_prefill_uses_pipeline_path_and_resets_flags_after_error(self):
         model = MagicMock()
         model.layers = []
         cache = [_make_v4_cache(offset=0, pool_rows=0)]
@@ -1287,7 +1287,7 @@ class TestKVPrefix:
                 model,
                 MagicMock(),
                 MagicMock(),
-                mx.arange(4_096, dtype=mx.int32),
+                mx.arange(22, dtype=mx.int32),
                 cache,
                 group=group,
                 on_prefill_progress=None,

@@ -336,6 +336,7 @@ class TestPipelineNoDeadlock:
     @pytest.mark.parametrize(
         "layer_splits,prompt_tokens",
         [
+            (LAYER_SPLITS_2WAY, 22),
             (LAYER_SPLITS_2WAY, 128),
             (LAYER_SPLITS_2WAY, 4096),
             (LAYER_SPLITS_2WAY, 8192),
@@ -346,6 +347,7 @@ class TestPipelineNoDeadlock:
             (LAYER_SPLITS_4WAY, 16384),
         ],
         ids=[
+            "2rank_22tok_warmup",
             "2rank_128tok",
             "2rank_4096tok",
             "2rank_8192tok",

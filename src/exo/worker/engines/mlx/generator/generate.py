@@ -391,7 +391,7 @@ def prefill(
     has_glm5 = has_glm5_next_cache(cache)
     has_bounded_snapshots = has_v4 or has_glm5
     is_pipeline = _has_pipeline_communication_layer(model)
-    use_pipeline_prefill = is_pipeline and num_tokens >= prefill_step_size
+    use_pipeline_prefill = is_pipeline
     pipeline_width = (
         group.size() if use_pipeline_prefill and group is not None else 1
     )
