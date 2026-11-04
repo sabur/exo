@@ -136,8 +136,15 @@ _PREFILL_MEMORY_RESERVE_BYTES = int(
 # Retain sparse cold-context anchors and increasingly dense rollback points
 # behind the current frontier. Normal conversation changes cluster near the
 # tail, while the cold anchors preserve recovery from rarer system/tool changes.
-_V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
-_V4_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000, 32_000, 16_000, 8_000, 4_000)
+# The one-token target aligns down to the latest available snapshot step.
+_V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 40_000)
+_V4_PREFIX_CACHE_FRONTIER_DISTANCES = (
+    8_000,
+    6_000,
+    4_000,
+    2_000,
+    1,
+)
 _V4_PREFIX_CACHE_SMALL_CONTEXT_TOKENS = 20_000
 _GLM5_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 50_000)
 _GLM5_PREFIX_CACHE_FRONTIER_DISTANCES = (64_000,)
@@ -663,6 +670,16 @@ def _bounded_snapshots(
         snapshot = _find_nearest_snapshot(ordered, target)
         if snapshot is not None:
             selected[snapshot.token_count] = snapshot
+    for pinned_token_count in pinned_token_counts:
+        # A pinned frontier is exact, but the next prompt can diverge just
+        # before it. Keep the nearest predecessor so a small rewind does not
+        # fall back to a much older geometric landmark.
+        predecessor = _find_nearest_snapshot(
+            ordered,
+            pinned_token_count - 1,
+        )
+        if predecessor is not None:
+            selected[predecessor.token_count] = predecessor
     selected[ordered[-1].token_count] = ordered[-1]
     return sorted(selected.values(), key=lambda snapshot: snapshot.token_count)
 

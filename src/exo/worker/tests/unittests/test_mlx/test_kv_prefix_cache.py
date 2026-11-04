@@ -957,6 +957,7 @@ class TestKVPrefix:
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             18_432,
             38_912,
+            78_999,
             80_999,
             85_000,
             88_000,
@@ -996,8 +997,6 @@ class TestKVPrefix:
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             16_384,
             36_864,
-            77_824,
-            159_744,
             212_992,
             217_088,
             221_184,
@@ -1074,12 +1073,12 @@ class TestKVPrefix:
     def test_v4_snapshot_landmarks_bias_toward_frontier(self):
         assert v4_snapshot_landmark_targets(150_000) == (
             20_000,
-            50_000,
-            86_000,
-            118_000,
-            134_000,
+            40_000,
             142_000,
+            144_000,
             146_000,
+            148_000,
+            149_999,
         )
 
     def test_glm5_snapshot_landmarks_bound_long_context_memory(self):
@@ -1109,7 +1108,13 @@ class TestKVPrefix:
             initial_token_count=40_000,
             num_tokens=50_001,
             snapshot_step=2_048,
-        ) == {8_192, 16_384, 32_768, 40_960, 45_056}
+        ) == {
+            40_960,
+            43_008,
+            45_056,
+            47_104,
+            49_152,
+        }
 
     def test_v4_prefill_captures_cold_and_frontier_landmarks(self):
         prompt_tokens = mx.arange(120001, dtype=mx.int32)
@@ -1124,12 +1129,14 @@ class TestKVPrefix:
             prompt_progress_callback(0, total)
             for processed in (
                 16384,
+                36864,
                 49152,
                 53248,
                 86016,
                 102400,
                 110592,
                 114688,
+                118784,
             ):
                 prompt_cache[0] = _make_v4_cache(
                     offset=processed,
@@ -1176,16 +1183,14 @@ class TestKVPrefix:
                 distributed_prompt_progress_callback=None,
             )
 
-        assert snapshot_mock.call_count == 8
+        assert snapshot_mock.call_count == 6
         copy_snapshot_mock.assert_not_called()
         assert [snapshot.token_count for snapshot in snapshots] == [
             16384,
-            49152,
-            53248,
-            86016,
-            102400,
+            36864,
             110592,
             114688,
+            118784,
         ]
         assert cache_length(cache) == len(prompt_tokens) - 1
 
@@ -1242,9 +1247,6 @@ class TestKVPrefix:
             18_432,
             38_912,
             79_872,
-            86_016,
-            116_736,
-            133_120,
             141_312,
             145_408,
         ]
@@ -1262,6 +1264,41 @@ class TestKVPrefix:
 
         assert matched_index == 0
         assert cache_length(restored) == 145_408
+
+    def test_v4_pinned_frontier_retains_immediate_predecessor(self):
+        prefix_cache = KVPrefixCache(None)
+        old_cache = [_make_v4_cache(offset=166_196, pool_rows=40)]
+        prefix_cache.prompts = [mx.arange(166_198, dtype=mx.int32)]
+        prefix_cache._entry_generations = [1]
+        prefix_cache.caches = [old_cache]
+        prefix_cache._snapshots = [
+            [
+                CacheSnapshot(states=[], token_count=147_456),
+                CacheSnapshot(states=[], token_count=157_696),
+                CacheSnapshot(states=[], token_count=161_792),
+                CacheSnapshot(states=[], token_count=163_840),
+                CacheSnapshot(states=[], token_count=165_888),
+            ]
+        ]
+        prefix_cache._media_regions = [[]]
+        prefix_cache._last_used = [1]
+        prefix_cache.prefill_tps = [0.0]
+
+        updated_cache = [_make_v4_cache(offset=167_090, pool_rows=40)]
+        prefix_cache.update_kv_cache(
+            0,
+            mx.arange(167_092, dtype=mx.int32),
+            updated_cache,
+            [],
+            restore_pos=166_196,
+        )
+
+        assert prefix_cache._snapshots[0] is not None
+        retained = [
+            snapshot.token_count for snapshot in prefix_cache._snapshots[0]
+        ]
+        assert 165_888 in retained
+        assert 166_196 in retained
 
     def test_short_prefill_uses_pipeline_path_and_resets_flags_after_error(self):
         model = MagicMock()
