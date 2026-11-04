@@ -248,13 +248,13 @@ def _cache_state_nbytes(state: object | None) -> int:
 
 def _detached_copy(a: mx.array) -> mx.array:
     """Create an independent copy of an mlx array without numpy round-trip.
-    
+
     Uses astype(dtype) which forces a copy while preserving the dtype.
     This keeps data on GPU and avoids expensive CPU transfer.
-    
+
     Args:
         a: Input mlx array
-    
+
     Returns:
         Independent copy of the array (same dtype, different memory)
     """
@@ -321,14 +321,10 @@ def _detached_copy_tree(value: object) -> object:
         mx.eval(copied)
         return copied
     if isinstance(value, list):
-        return [
-            _detached_copy_tree(item)
-            for item in cast(list[object], value)
-        ]
+        return [_detached_copy_tree(item) for item in cast(list[object], value)]
     if isinstance(value, tuple):
         return tuple(
-            _detached_copy_tree(item)
-            for item in cast(tuple[object, ...], value)
+            _detached_copy_tree(item) for item in cast(tuple[object, ...], value)
         )
     if isinstance(value, dict):
         return {
@@ -347,10 +343,7 @@ def _copy_vlm_cache(
             *[
                 _copy_vlm_cache(
                     cast(
-                        VlmArraysCache
-                        | VlmCacheList
-                        | VlmKVCache
-                        | VlmPoolingCache,
+                        VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
                         inner,
                     )
                 )
@@ -390,10 +383,7 @@ def _empty_vlm_cache(
             *[
                 _empty_vlm_cache(
                     cast(
-                        VlmArraysCache
-                        | VlmCacheList
-                        | VlmKVCache
-                        | VlmPoolingCache,
+                        VlmArraysCache | VlmCacheList | VlmKVCache | VlmPoolingCache,
                         inner,
                     )
                 )
@@ -612,10 +602,7 @@ def v4_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
         if target < final_token_count
     }
     if final_token_count < _V4_PREFIX_CACHE_SMALL_CONTEXT_TOKENS:
-        targets.update(
-            final_token_count * numerator // 4
-            for numerator in range(1, 4)
-        )
+        targets.update(final_token_count * numerator // 4 for numerator in range(1, 4))
     targets.update(
         final_token_count - distance
         for distance in _V4_PREFIX_CACHE_FRONTIER_DISTANCES
@@ -631,10 +618,7 @@ def glm5_snapshot_landmark_targets(final_token_count: int) -> tuple[int, ...]:
         if target < final_token_count
     }
     if final_token_count < _GLM5_PREFIX_CACHE_SMALL_CONTEXT_TOKENS:
-        targets.update(
-            final_token_count * numerator // 4
-            for numerator in range(1, 4)
-        )
+        targets.update(final_token_count * numerator // 4 for numerator in range(1, 4))
     targets.update(
         final_token_count - distance
         for distance in _GLM5_PREFIX_CACHE_FRONTIER_DISTANCES
@@ -651,9 +635,7 @@ def _bounded_snapshots(
 ) -> list[CacheSnapshot] | None:
     if not snapshots:
         return None
-    snapshots_by_position = {
-        snapshot.token_count: snapshot for snapshot in snapshots
-    }
+    snapshots_by_position = {snapshot.token_count: snapshot for snapshot in snapshots}
     ordered = sorted(
         (
             snapshot
@@ -745,7 +727,9 @@ class KVPrefixCache:
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._instance_id: str = uuid.uuid4().hex  # immutable cache-instance namespace
-        self._entry_generations: list[int] = []  # monotonic immutable generation ID per entry
+        self._entry_generations: list[
+            int
+        ] = []  # monotonic immutable generation ID per entry
         self._next_generation: int = 1
         self._group = group
         self._prompt_observations: list[_PromptObservation] = []
@@ -780,6 +764,7 @@ class KVPrefixCache:
             "[INSTRUMENT] Prompt cache observation recorded: "
             f"source={source}, base={len(base_prompt)}"
         )
+
     def _log_prompt_alignment(
         self,
         prompt_tokens: mx.array,
@@ -932,9 +917,7 @@ class KVPrefixCache:
             mx.clear_cache()
             return
 
-        self._evict_for_prefill_headroom(
-            protected_generation=entry_generation
-        )
+        self._evict_for_prefill_headroom(protected_generation=entry_generation)
         self._evict_if_needed(protected_generation=entry_generation)
         index = self._entry_generations.index(entry_generation)
 
@@ -1008,9 +991,7 @@ class KVPrefixCache:
         self._last_used[index] = access_counter
         self._telemetry_for_index(index).record_update()
         stored_generation = self._entry_generations[index]
-        self._enforce_entry_caps(
-            protected_generation=stored_generation
-        )
+        self._enforce_entry_caps(protected_generation=stored_generation)
         index = self._entry_generations.index(stored_generation)
         logger.info(
             f"KV cache updated (index {index}): {len(prompt_tokens)} tokens, "
@@ -1185,7 +1166,9 @@ class KVPrefixCache:
         selection_ms = (time.perf_counter() - selection_start) * 1000
 
         # Derive snapshot ordinal: 0 = newest (largest token_count)
-        _snapshots = self._snapshots[best_index] if best_index < len(self._snapshots) else None
+        _snapshots = (
+            self._snapshots[best_index] if best_index < len(self._snapshots) else None
+        )
         if _snapshots and best_restore_snap is not None:
             _sorted = sorted(_snapshots, key=lambda s: s.token_count, reverse=True)
             try:
@@ -1237,9 +1220,7 @@ class KVPrefixCache:
             restored_tokens=best_restore_pos,
             is_exact=best_is_exact,
             snapshot_token_count=(
-                best_restore_snap.token_count
-                if best_restore_snap is not None
-                else None
+                best_restore_snap.token_count if best_restore_snap is not None else None
             ),
         )
 
@@ -1290,9 +1271,7 @@ class KVPrefixCache:
 
         return match_length
 
-    def _evict_if_needed(
-        self, *, protected_generation: int | None = None
-    ) -> None:
+    def _evict_if_needed(self, *, protected_generation: int | None = None) -> None:
         """Evict least recently used entries while memory usage is high."""
         if len(self.caches) == 0:
             return
@@ -1314,9 +1293,7 @@ class KVPrefixCache:
                     "only the protected entry remains"
                 )
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(lru_index, "memory pressure")
             gc.collect()
             mx.clear_cache()
@@ -1342,9 +1319,7 @@ class KVPrefixCache:
             ]
             if not candidates:
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(
                 lru_index,
                 f"DeepSeek V4 entry cap {_V4_PREFIX_CACHE_MAX_ENTRIES}",
@@ -1365,9 +1340,7 @@ class KVPrefixCache:
             ]
             if not candidates:
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(
                 lru_index,
                 f"GLM-5-Next entry cap {_GLM5_PREFIX_CACHE_MAX_ENTRIES}",
@@ -1381,16 +1354,11 @@ class KVPrefixCache:
             candidates = [
                 index
                 for index, regions in enumerate(self._media_regions)
-                if (
-                    regions
-                    and self._entry_generations[index] != protected_generation
-                )
+                if (regions and self._entry_generations[index] != protected_generation)
             ]
             if not candidates:
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(
                 lru_index,
                 f"media entry cap {_MEDIA_PREFIX_CACHE_MAX_ENTRIES}",
@@ -1405,9 +1373,7 @@ class KVPrefixCache:
             ]
             if not candidates:
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(
                 lru_index,
                 f"total entry cap {_PREFIX_CACHE_MAX_ENTRIES}",
@@ -1440,9 +1406,7 @@ class KVPrefixCache:
                     "only the protected entry remains"
                 )
                 break
-            lru_index = min(
-                candidates, key=lambda index: self._last_used[index]
-            )
+            lru_index = min(candidates, key=lambda index: self._last_used[index])
             self._evict_entry(
                 lru_index,
                 "prefill memory reserve "
@@ -1507,9 +1471,7 @@ class KVPrefixCache:
         since_selection = (
             "never"
             if telemetry.last_selected_access is None
-            else str(
-                max(0, self._access_counter - telemetry.last_selected_access)
-            )
+            else str(max(0, self._access_counter - telemetry.last_selected_access))
         )
         snapshot_restores = sorted(telemetry.snapshot_restore_counts.items())
         return (
@@ -1531,9 +1493,7 @@ class KVPrefixCache:
     def _log_total_v4_snapshot_retention(self) -> None:
         total_bytes = sum(
             snapshot.nbytes
-            for cache, snapshots in zip(
-                self.caches, self._snapshots, strict=True
-            )
+            for cache, snapshots in zip(self.caches, self._snapshots, strict=True)
             if has_deepseek_v4_cache(cache)
             for snapshot in snapshots or []
         )

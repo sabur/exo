@@ -1294,9 +1294,7 @@ class TestKVPrefix:
         )
 
         assert prefix_cache._snapshots[0] is not None
-        retained = [
-            snapshot.token_count for snapshot in prefix_cache._snapshots[0]
-        ]
+        retained = [snapshot.token_count for snapshot in prefix_cache._snapshots[0]]
         assert 165_888 in retained
         assert 166_196 in retained
 
