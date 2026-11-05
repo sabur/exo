@@ -134,11 +134,13 @@ _PREFILL_MEMORY_RESERVE_BYTES = int(
 )
 
 # Retain sparse cold-context anchors and increasingly dense rollback points
-# behind the current frontier. Normal conversation changes cluster near the
-# tail, while the cold anchors preserve recovery from rarer system/tool changes.
+# behind the current frontier. The 12K and 20K points are temporary protection
+# for deep tool-transcript rewrites while their upstream cause is investigated.
 # The one-token target aligns down to the latest available snapshot step.
 _V4_PREFIX_CACHE_COLD_LANDMARK_TOKENS = (20_000, 40_000)
 _V4_PREFIX_CACHE_FRONTIER_DISTANCES = (
+    20_000,
+    12_000,
     8_000,
     6_000,
     4_000,

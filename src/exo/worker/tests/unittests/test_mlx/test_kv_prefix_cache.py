@@ -957,6 +957,7 @@ class TestKVPrefix:
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             18_432,
             38_912,
+            77_824,
             78_999,
             80_999,
             85_000,
@@ -997,6 +998,8 @@ class TestKVPrefix:
         assert [s.token_count for s in prefix_cache._snapshots[0]] == [
             16_384,
             36_864,
+            159_744,
+            208_896,
             212_992,
             217_088,
             221_184,
@@ -1070,10 +1073,12 @@ class TestKVPrefix:
         assert mx.array_equal(prefix_cache.prompts[0], first_prompt)
         assert prefix_cache._snapshots[0] is None
 
-    def test_v4_snapshot_landmarks_bias_toward_frontier(self):
+    def test_v4_snapshot_landmarks_cover_deep_tool_suffix_rewrites(self):
         assert v4_snapshot_landmark_targets(150_000) == (
             20_000,
             40_000,
+            130_000,
+            138_000,
             142_000,
             144_000,
             146_000,
@@ -1109,6 +1114,8 @@ class TestKVPrefix:
             num_tokens=50_001,
             snapshot_step=2_048,
         ) == {
+            28_672,
+            36_864,
             40_960,
             43_008,
             45_056,
@@ -1133,7 +1140,9 @@ class TestKVPrefix:
                 49152,
                 53248,
                 86016,
+                98304,
                 102400,
+                106496,
                 110592,
                 114688,
                 118784,
@@ -1183,11 +1192,13 @@ class TestKVPrefix:
                 distributed_prompt_progress_callback=None,
             )
 
-        assert snapshot_mock.call_count == 6
+        assert snapshot_mock.call_count == 8
         copy_snapshot_mock.assert_not_called()
         assert [snapshot.token_count for snapshot in snapshots] == [
             16384,
             36864,
+            98304,
+            106496,
             110592,
             114688,
             118784,
@@ -1247,6 +1258,8 @@ class TestKVPrefix:
             18_432,
             38_912,
             79_872,
+            116_736,
+            133_120,
             141_312,
             145_408,
         ]
@@ -1264,6 +1277,50 @@ class TestKVPrefix:
 
         assert matched_index == 0
         assert cache_length(restored) == 145_408
+
+    def test_v4_deep_tool_suffix_rewrite_uses_extended_tail(self):
+        prefix_cache = KVPrefixCache(None)
+        prompt = mx.arange(246_944, dtype=mx.int32)
+        cache = [_make_v4_cache(offset=246_942, pool_rows=60)]
+        snapshot_positions = (
+            18_432,
+            38_912,
+            225_862,
+            234_054,
+            238_150,
+            240_198,
+            242_246,
+            244_294,
+            246_342,
+            246_638,
+        )
+        snapshots = [
+            CacheSnapshot(
+                states=[
+                    _make_v4_cache(
+                        offset=token_count,
+                        pool_rows=token_count // 4096,
+                    )
+                ],
+                token_count=token_count,
+            )
+            for token_count in snapshot_positions
+        ]
+        prefix_cache.add_kv_cache(prompt, cache, snapshots)
+
+        query = mx.concatenate(
+            [
+                prompt[:234_275],
+                mx.array([999_999], dtype=mx.int32),
+            ]
+        )
+        restored, _, matched_index, _ = prefix_cache.get_kv_cache(
+            MagicMock(),
+            query,
+        )
+
+        assert matched_index == 0
+        assert cache_length(restored) == 234_054
 
     def test_v4_pinned_frontier_retains_immediate_predecessor(self):
         prefix_cache = KVPrefixCache(None)
